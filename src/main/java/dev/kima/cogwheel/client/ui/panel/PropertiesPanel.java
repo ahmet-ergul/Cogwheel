@@ -32,6 +32,7 @@ public final class PropertiesPanel {
     private static final int ROW_HEIGHT = 14;
     private static final int SLIDER_HEIGHT = 10;
     private static final int BUTTON_HEIGHT = 16;
+    private static final int CLOSE_SIZE = 12;
 
     private static final int BG_COLOR = 0xFF131726;
     private static final int BORDER = 0xFF2A3148;
@@ -48,6 +49,7 @@ public final class PropertiesPanel {
 
     private final Consumer<Node> onNodeUpdated;
     private final Runnable onSwapRecipe;
+    private final Runnable onClose;
 
     private Node selected;
     private int panelX;
@@ -55,9 +57,10 @@ public final class PropertiesPanel {
     private int panelH;
     private boolean draggingSlider;
 
-    public PropertiesPanel(Consumer<Node> onNodeUpdated, Runnable onSwapRecipe) {
+    public PropertiesPanel(Consumer<Node> onNodeUpdated, Runnable onSwapRecipe, Runnable onClose) {
         this.onNodeUpdated = onNodeUpdated;
         this.onSwapRecipe = onSwapRecipe;
+        this.onClose = onClose;
     }
 
     public void setSelected(Node node) {
@@ -89,12 +92,21 @@ public final class PropertiesPanel {
         int hx = panelX;
         int hy = panelY;
         graphics.fill(hx, hy, hx + WIDTH, hy + HEADER_HEIGHT, HEADER_BG);
+        graphics.fill(hx, hy + HEADER_HEIGHT, hx + WIDTH, hy + HEADER_HEIGHT + 1, BORDER);
         if (!selected.icon().isEmpty()) {
             graphics.renderItem(selected.icon(), hx + PADDING, hy + 3);
         }
         graphics.drawString(font,
-                truncate(font, selected.title().getString(), WIDTH - 24 - PADDING * 2),
+                truncate(font, selected.title().getString(), WIDTH - CLOSE_SIZE - PADDING * 4 - 20),
                 hx + PADDING + 20, hy + 7, TEXT, false);
+
+        // Close button in the header.
+        int closeX = hx + WIDTH - CLOSE_SIZE - PADDING;
+        int closeY = hy + (HEADER_HEIGHT - CLOSE_SIZE) / 2;
+        boolean closeHover = mouseX >= closeX && mouseX <= closeX + CLOSE_SIZE
+                && mouseY >= closeY && mouseY < closeY + CLOSE_SIZE;
+        if (closeHover) graphics.fill(closeX, closeY, closeX + CLOSE_SIZE, closeY + CLOSE_SIZE, BUTTON_HOVER_BG);
+        graphics.drawString(font, "×", closeX + 3, closeY + 2, TEXT_DIM, false);
 
         int contentY = panelY + HEADER_HEIGHT + PADDING;
         if (selected instanceof SourceNode src) {
@@ -184,6 +196,14 @@ public final class PropertiesPanel {
     public boolean mouseClicked(double sx, double sy, int button) {
         if (!contains(sx, sy) || selected == null) return false;
         if (button != 0) return true; // consume but ignore non-left clicks
+
+        // Close button.
+        int closeX = panelX + WIDTH - CLOSE_SIZE - PADDING;
+        int closeY = panelY + (HEADER_HEIGHT - CLOSE_SIZE) / 2;
+        if (hits(sx, sy, closeX, closeY, CLOSE_SIZE, CLOSE_SIZE)) {
+            if (onClose != null) onClose.run();
+            return true;
+        }
 
         int contentY = panelY + HEADER_HEIGHT + PADDING;
         if (selected instanceof SourceNode src) {

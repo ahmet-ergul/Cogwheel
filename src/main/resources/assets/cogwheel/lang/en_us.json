@@ -5,6 +5,16 @@
   "screen.cogwheel.toolbox.search": "Search items",
   "screen.cogwheel.recipe_picker": "Choose recipe for %s",
 
+  "screen.cogwheel.left.categories": "Categories",
+  "screen.cogwheel.category.recipes": "Recipes",
+  "screen.cogwheel.category.recipes.subtitle": "Items produced by recipes",
+  "screen.cogwheel.category.sources": "Sources",
+  "screen.cogwheel.category.sources.subtitle": "External raw inputs",
+  "screen.cogwheel.category.sinks": "Sinks",
+  "screen.cogwheel.category.sinks.subtitle": "Final outputs",
+  "screen.cogwheel.category.logic": "Logic",
+  "screen.cogwheel.category.logic.subtitle": "Coming soon",
+
   "node.cogwheel.source.manual": "Source",
   "node.cogwheel.source.external_factory": "External Factory",
   "node.cogwheel.source.drop": "Mob Drop",

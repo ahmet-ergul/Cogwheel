@@ -7,35 +7,38 @@ import dev.kima.cogwheel.client.ui.canvas.ContextMenu;
 import dev.kima.cogwheel.client.ui.canvas.DemoDesigns;
 import dev.kima.cogwheel.client.ui.canvas.EdgeValidation;
 import dev.kima.cogwheel.client.ui.canvas.HitTest;
+import dev.kima.cogwheel.client.ui.panel.LeftPanel;
+import dev.kima.cogwheel.client.ui.panel.LeftPanelPage;
 import dev.kima.cogwheel.client.ui.panel.PropertiesPanel;
 import dev.kima.cogwheel.client.ui.panel.SolverOverlay;
-import dev.kima.cogwheel.client.ui.panel.ToolboxPanel;
 import dev.kima.cogwheel.client.ui.picker.RecipePickerScreen;
 import dev.kima.cogwheel.model.Design;
 import dev.kima.cogwheel.model.Edge;
 import dev.kima.cogwheel.model.Node;
 import dev.kima.cogwheel.model.RecipeNode;
+import dev.kima.cogwheel.model.SinkNode;
 import dev.kima.cogwheel.model.SourceNode;
 import dev.kima.cogwheel.model.Vec2;
 import dev.kima.cogwheel.persistence.DesignStore;
 import dev.kima.cogwheel.recipe.RecipeEntry;
 import dev.kima.cogwheel.recipe.RecipeNodeFactory;
+import dev.kima.cogwheel.recipe.source.RebuildTrigger;
+import dev.kima.cogwheel.recipe.spike.RecipeAccessSpike;
 import dev.kima.cogwheel.solver.Solver;
 import dev.kima.cogwheel.solver.SolverResult;
-import org.lwjgl.glfw.GLFW;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
-import dev.kima.cogwheel.recipe.source.RebuildTrigger;
-import dev.kima.cogwheel.recipe.spike.RecipeAccessSpike;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.network.chat.Component;
-
+import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 
 public class EditorScreen extends Screen {
     private static final int CANVAS_MARGIN_TOP = 28;
@@ -45,17 +48,26 @@ public class EditorScreen extends Screen {
     private static final int MIDDLE_MOUSE_BUTTON = 2;
     /** World-space distance threshold for hit-testing edges (cubic bezier point→segment). */
     private static final double EDGE_HIT_RADIUS = 6;
-
     /** World-space radius for port hit-testing. Slightly larger than the visual port dot for forgiving clicks. */
     private static final double PORT_HIT_RADIUS = 10;
 
+    private static final int TOGGLE_SIZE = 22;
+    private static final int TOGGLE_MARGIN = 8;
+
     private final Canvas canvas = new Canvas();
     private final ContextMenu contextMenu = new ContextMenu();
-    private final ToolboxPanel toolbox = new ToolboxPanel(this::onToolboxItemClicked);
-    private final PropertiesPanel properties = new PropertiesPanel(this::replaceSelectedNode, this::onSwapRecipeRequested);
+    private LeftPanel leftPanel;
+    private final PropertiesPanel properties = new PropertiesPanel(
+            this::replaceSelectedNode,
+            this::onSwapRecipeRequested,
+            () -> propertiesPanelClosed = true);
     private Design design = DemoDesigns.ironSmelting();
     private boolean panning = false;
     private int canvasX, canvasY, canvasW, canvasH;
+
+    /** Reset to false whenever the selection changes, so a fresh selection always shows its properties. */
+    private boolean propertiesPanelClosed = false;
+    private UUID lastSelectionForPanel = null;
 
     /** Transient banner. Shown for {@link #BANNER_LIFETIME_MS} after each save / load. */
     private String banner;
@@ -74,40 +86,117 @@ public class EditorScreen extends Screen {
                 "EditorScreen opened with RecipeIndex size = {}",
                 RebuildTrigger.index().size());
 
-        toolbox.buildCatalog(RebuildTrigger.index());
-        toolbox.setLayout(CANVAS_MARGIN_OTHER, CANVAS_MARGIN_TOP,
-                this.height - CANVAS_MARGIN_TOP - CANVAS_MARGIN_OTHER);
-        this.addRenderableWidget(toolbox.createSearchBox(this.font,
-                CANVAS_MARGIN_OTHER, CANVAS_MARGIN_TOP));
+        LeftPanelPage.WidgetHost widgetHost = new LeftPanelPage.WidgetHost() {
+            @Override
+            public void register(EditBox widget) {
+                EditorScreen.this.addRenderableWidget(widget);
+            }
+            @Override
+            public void unregister(EditBox widget) {
+                EditorScreen.this.removeWidget(widget);
+            }
+        };
+        leftPanel = new LeftPanel(
+                widgetHost,
+                RebuildTrigger.index(),
+                new LeftPanel.Callbacks(this::addRecipeNode, this::addSourceNode, this::addSinkNode),
+                null);
 
-        int propertiesX = this.width - CANVAS_MARGIN_OTHER - PropertiesPanel.WIDTH;
-        properties.setLayout(propertiesX, CANVAS_MARGIN_TOP,
-                this.height - CANVAS_MARGIN_TOP - CANVAS_MARGIN_OTHER);
+        // Layout depends on which panels are visible; recompute now and again per render frame.
+        recomputeLayout();
+    }
 
-        canvasX = CANVAS_MARGIN_OTHER + ToolboxPanel.WIDTH + CANVAS_MARGIN_OTHER;
+    /**
+     * Recalculates canvas viewport bounds + panel layouts based on the current open/visible state
+     * of the left and right panels. Called every frame from {@link #render} so panel toggling
+     * appears smooth.
+     */
+    private void recomputeLayout() {
+        int leftSpace = (leftPanel != null && leftPanel.isOpen())
+                ? LeftPanel.WIDTH + CANVAS_MARGIN_OTHER : 0;
+        boolean rightShown = isPropertiesPanelShown();
+        int rightSpace = rightShown ? PropertiesPanel.WIDTH + CANVAS_MARGIN_OTHER : 0;
+
+        canvasX = CANVAS_MARGIN_OTHER + leftSpace;
         canvasY = CANVAS_MARGIN_TOP;
-        canvasW = propertiesX - CANVAS_MARGIN_OTHER - canvasX;
+        canvasW = this.width - canvasX - CANVAS_MARGIN_OTHER - rightSpace;
         canvasH = this.height - CANVAS_MARGIN_TOP - CANVAS_MARGIN_OTHER - SolverOverlay.HEIGHT;
+
+        int panelH = this.height - CANVAS_MARGIN_TOP - CANVAS_MARGIN_OTHER;
+        if (leftPanel != null) {
+            leftPanel.setLayout(CANVAS_MARGIN_OTHER, CANVAS_MARGIN_TOP, panelH);
+        }
+        if (rightShown) {
+            properties.setLayout(canvasX + canvasW + CANVAS_MARGIN_OTHER, CANVAS_MARGIN_TOP, panelH);
+        }
+    }
+
+    private boolean isPropertiesPanelShown() {
+        return canvas.selectedNodeId() != null && !propertiesPanelClosed;
     }
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         super.render(graphics, mouseX, mouseY, partialTick);
 
+        // Reset the closed flag whenever the selection changes — a fresh selection always shows
+        // its properties, even if the user had closed the panel on the previous selection.
+        UUID currentSelection = canvas.selectedNodeId();
+        if (!Objects.equals(currentSelection, lastSelectionForPanel)) {
+            lastSelectionForPanel = currentSelection;
+            propertiesPanelClosed = false;
+        }
+
+        recomputeLayout();
+
         properties.setSelected(design.findNode(canvas.selectedNodeId()));
 
         CanvasRenderer.render(graphics, canvas, design, canvasX, canvasY, canvasW, canvasH);
-        toolbox.render(graphics, mouseX, mouseY);
-        properties.render(graphics, mouseX, mouseY);
+        if (leftPanel != null && leftPanel.isOpen()) {
+            leftPanel.render(graphics, mouseX, mouseY);
+        }
+        if (isPropertiesPanelShown()) {
+            properties.render(graphics, mouseX, mouseY);
+        }
 
         SolverResult solverResult = Solver.solve(design, RebuildTrigger.index());
         SolverOverlay.render(graphics, solverResult, canvasX, canvasY + canvasH, canvasW);
+
+        renderToggleButton(graphics, mouseX, mouseY);
 
         graphics.drawCenteredString(this.font, this.title, canvasX + canvasW / 2, 8, 0xFFFFFFFF);
         renderBanner(graphics);
 
         // Context menu renders on top of everything, in screen space (not pose-transformed).
         contextMenu.render(graphics, mouseX, mouseY);
+    }
+
+    private int toggleX() { return canvasX + canvasW - TOGGLE_SIZE - TOGGLE_MARGIN; }
+    private int toggleY() { return canvasY + canvasH - TOGGLE_SIZE - TOGGLE_MARGIN; }
+
+    private boolean toggleHit(double sx, double sy) {
+        int tx = toggleX();
+        int ty = toggleY();
+        return sx >= tx && sx <= tx + TOGGLE_SIZE && sy >= ty && sy <= ty + TOGGLE_SIZE;
+    }
+
+    private void renderToggleButton(GuiGraphics graphics, int mouseX, int mouseY) {
+        int tx = toggleX();
+        int ty = toggleY();
+        boolean hover = toggleHit(mouseX, mouseY);
+        int bg = hover ? 0xFF3A4868 : 0xCC2A3148;
+        int border = 0xFF54607A;
+        graphics.fill(tx, ty, tx + TOGGLE_SIZE, ty + TOGGLE_SIZE, bg);
+        graphics.fill(tx - 1, ty - 1, tx + TOGGLE_SIZE + 1, ty, border);
+        graphics.fill(tx - 1, ty + TOGGLE_SIZE, tx + TOGGLE_SIZE + 1, ty + TOGGLE_SIZE + 1, border);
+        graphics.fill(tx - 1, ty, tx, ty + TOGGLE_SIZE, border);
+        graphics.fill(tx + TOGGLE_SIZE, ty, tx + TOGGLE_SIZE + 1, ty + TOGGLE_SIZE, border);
+        String icon = (leftPanel != null && leftPanel.isOpen()) ? "−" : "+";
+        int iconW = this.font.width(icon);
+        graphics.drawString(this.font, icon,
+                tx + (TOGGLE_SIZE - iconW) / 2,
+                ty + (TOGGLE_SIZE - 8) / 2,
+                0xFFFFFFFF, false);
     }
 
     private void renderBanner(GuiGraphics graphics) {
@@ -134,26 +223,34 @@ public class EditorScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        // Any click first interacts with the context menu if it's open.
+        // Context menu first — must catch its own clicks before anything else.
         if (contextMenu.isVisible()) {
             boolean consumed = contextMenu.handleClick(mouseX, mouseY);
             if (consumed) return true;
-            // Menu just closed because click was outside it; fall through so the click still hits canvas.
+            // Menu just closed because click was outside it; fall through.
         }
 
-        // Toolbox panel gets first chance — clicks inside it never reach the canvas.
-        if (toolbox.contains(mouseX, mouseY)) {
-            // Let vanilla widgets (the search EditBox) handle focus first.
-            boolean superHandled = super.mouseClicked(mouseX, mouseY, button);
-            if (superHandled) return true;
-            if (button == LEFT_MOUSE_BUTTON) {
-                return toolbox.mouseClicked(mouseX, mouseY, button);
+        // Toggle button — always clickable regardless of panel state.
+        if (toggleHit(mouseX, mouseY)) {
+            if (leftPanel != null) {
+                if (leftPanel.isOpen()) leftPanel.close();
+                else leftPanel.open();
             }
             return true;
         }
 
-        // Properties panel gets next chance (right sidebar).
-        if (properties.contains(mouseX, mouseY)) {
+        // Left panel (only when open).
+        if (leftPanel != null && leftPanel.isOpen() && leftPanel.contains(mouseX, mouseY)) {
+            boolean superHandled = super.mouseClicked(mouseX, mouseY, button);
+            if (superHandled) return true;
+            if (button == LEFT_MOUSE_BUTTON) {
+                return leftPanel.mouseClicked(mouseX, mouseY, button);
+            }
+            return true;
+        }
+
+        // Right panel (only when shown).
+        if (isPropertiesPanelShown() && properties.contains(mouseX, mouseY)) {
             return properties.mouseClicked(mouseX, mouseY, button);
         }
 
@@ -210,7 +307,7 @@ public class EditorScreen extends Screen {
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
-        if (properties.mouseReleased(mouseX, mouseY, button)) return true;
+        if (isPropertiesPanelShown() && properties.mouseReleased(mouseX, mouseY, button)) return true;
         if (button == MIDDLE_MOUSE_BUTTON) {
             panning = false;
             return true;
@@ -238,7 +335,7 @@ public class EditorScreen extends Screen {
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
-        if (properties.mouseDragged(mouseX, mouseY, button, dragX, dragY)) return true;
+        if (isPropertiesPanelShown() && properties.mouseDragged(mouseX, mouseY, button, dragX, dragY)) return true;
         if (panning) {
             canvas.pan(dragX, dragY);
             return true;
@@ -260,11 +357,59 @@ public class EditorScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-        if (toolbox.contains(mouseX, mouseY)) {
-            return toolbox.mouseScrolled(mouseX, mouseY, scrollY);
+        if (leftPanel != null && leftPanel.isOpen() && leftPanel.contains(mouseX, mouseY)) {
+            return leftPanel.mouseScrolled(mouseX, mouseY, scrollY);
         }
         canvas.zoomAt(mouseX, mouseY, scrollY);
         return true;
+    }
+
+    private Vec2 canvasCenter() {
+        return canvas.screenToWorld(canvasX + canvasW / 2.0, canvasY + canvasH / 2.0);
+    }
+
+    private void addRecipeNode(Item item) {
+        var index = RebuildTrigger.index();
+        List<RecipeEntry> ways = index.waysToProduce(item);
+        Vec2 placement = canvasCenter();
+
+        if (ways.isEmpty()) {
+            // No recipes — fall through to a source node so the click does SOMETHING.
+            addSourceAt(item, placement);
+            return;
+        }
+        if (ways.size() == 1) {
+            RecipeNode node = RecipeNodeFactory.fromRecipeEntry(ways.get(0), placement);
+            design = design.withNodeAdded(node);
+            canvas.setSelectedNodeId(node.id());
+            return;
+        }
+        ItemStack stack = new ItemStack(item);
+        Minecraft.getInstance().setScreen(new RecipePickerScreen(
+                this,
+                Component.literal(stack.getHoverName().getString()),
+                ways,
+                chosen -> {
+                    RecipeNode node = RecipeNodeFactory.fromRecipeEntry(chosen, placement);
+                    design = design.withNodeAdded(node);
+                    canvas.setSelectedNodeId(node.id());
+                }));
+    }
+
+    private void addSourceNode(Item item) {
+        addSourceAt(item, canvasCenter());
+    }
+
+    private void addSourceAt(Item item, Vec2 placement) {
+        SourceNode node = RecipeNodeFactory.source(item, placement);
+        design = design.withNodeAdded(node);
+        canvas.setSelectedNodeId(node.id());
+    }
+
+    private void addSinkNode(Item item) {
+        SinkNode node = new SinkNode(UUID.randomUUID(), canvasCenter(), new ItemStack(item));
+        design = design.withNodeAdded(node);
+        canvas.setSelectedNodeId(node.id());
     }
 
     private void replaceSelectedNode(Node updated) {
@@ -303,40 +448,9 @@ public class EditorScreen extends Screen {
      * RecipeNodeFactory assigns a fresh UUID; when SWAPPING we want to preserve the old one so any
      * edges connected to this node keep working. Construct a copy of {@code from} with the supplied id.
      */
-    private static RecipeNode withId(RecipeNode from, java.util.UUID id) {
+    private static RecipeNode withId(RecipeNode from, UUID id) {
         return new RecipeNode(id, from.position(), from.recipeId(), from.title(), from.icon(),
                 from.inputs(), from.outputs(), from.parallelism());
-    }
-
-    private void onToolboxItemClicked(Item item) {
-        var index = RebuildTrigger.index();
-        List<RecipeEntry> ways = index.waysToProduce(item);
-        Vec2 placement = canvas.screenToWorld(canvasX + canvasW / 2.0, canvasY + canvasH / 2.0);
-
-        if (ways.isEmpty()) {
-            // No recipes produce this — treat as a raw input source.
-            SourceNode node = RecipeNodeFactory.source(item, placement);
-            design = design.withNodeAdded(node);
-            canvas.setSelectedNodeId(node.id());
-            return;
-        }
-        if (ways.size() == 1) {
-            RecipeNode node = RecipeNodeFactory.fromRecipeEntry(ways.get(0), placement);
-            design = design.withNodeAdded(node);
-            canvas.setSelectedNodeId(node.id());
-            return;
-        }
-        // Multiple options — open the picker.
-        ItemStack stack = new ItemStack(item);
-        Minecraft.getInstance().setScreen(new RecipePickerScreen(
-                this,
-                Component.literal(stack.getHoverName().getString()),
-                ways,
-                chosen -> {
-                    RecipeNode node = RecipeNodeFactory.fromRecipeEntry(chosen, placement);
-                    design = design.withNodeAdded(node);
-                    canvas.setSelectedNodeId(node.id());
-                }));
     }
 
     @Override
