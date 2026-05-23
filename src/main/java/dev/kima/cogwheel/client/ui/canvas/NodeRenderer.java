@@ -7,7 +7,6 @@ import dev.kima.cogwheel.model.Vec2;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.network.chat.Component;
 
 /**
  * Renders a single node as a panel with header (icon + title) and rows of input/output ports.
@@ -62,8 +61,10 @@ public final class NodeRenderer {
 
         // Header.
         graphics.fill(x, y, x + w, y + HEADER_HEIGHT, HEADER_BG);
-        graphics.renderItem(node.icon(), x + 3, y + 3);
-        graphics.drawString(font, truncate(font, node.title(), w - 22), x + 22, y + 7, TEXT, false);
+        if (!node.icon().isEmpty()) {
+            graphics.renderItem(node.icon(), x + 3, y + 3);
+        }
+        graphics.drawString(font, truncate(font, node.title().getString(), w - 22), x + 22, y + 7, TEXT, false);
 
         // Input ports (left side).
         for (Port p : node.inputs()) {
@@ -85,24 +86,16 @@ public final class NodeRenderer {
         int r = PORT_DOT_RADIUS;
         graphics.fill(cx - r, cy - r, cx + r, cy + r, color);
 
-        // Item icon next to the port label (inside the node).
+        // Item icon next to the dot, inside the node body. The icon IS the label — full label
+        // text removed because the input port [N] and output port [N] are on the same row and
+        // their labels collide horizontally with anything but trivially-short names.
         int iconX = output ? cx - 22 : cx + 6;
-        int labelX = output ? iconX - 4 : iconX + 18;
         if (!port.display().isEmpty()) {
             graphics.renderItem(port.display(), iconX, cy - 8);
         }
-        int labelY = cy - 4;
-        String text = truncate(font, Component.literal(port.label()), 70);
-        if (output) {
-            int textW = font.width(text);
-            graphics.drawString(font, text, labelX - textW, labelY, TEXT, false);
-        } else {
-            graphics.drawString(font, text, labelX, labelY, TEXT, false);
-        }
     }
 
-    private static String truncate(Font font, Component component, int maxWidth) {
-        String s = component.getString();
+    private static String truncate(Font font, String s, int maxWidth) {
         if (font.width(s) <= maxWidth) return s;
         while (s.length() > 0 && font.width(s + "…") > maxWidth) {
             s = s.substring(0, s.length() - 1);

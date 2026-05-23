@@ -33,6 +33,8 @@ public final class ToolboxPanel {
     private static final int SEARCH_HEIGHT = 18;
     private static final int ROW_HEIGHT = 18;
     private static final int PADDING = 4;
+    /** Bottom strip reserved for the item-count label so the scrollable list can't draw over it. */
+    private static final int FOOTER_HEIGHT = 14;
 
     private static final int BG_COLOR = 0xFF131726;
     private static final int BORDER = 0xFF2A3148;
@@ -98,9 +100,9 @@ public final class ToolboxPanel {
         graphics.fill(panelX, panelY, panelX + WIDTH, panelY + panelH, BG_COLOR);
         graphics.fill(panelX + WIDTH, panelY, panelX + WIDTH + 1, panelY + panelH, BORDER);
 
-        // Item list area starts below the search box.
-        int listY = panelY + SEARCH_HEIGHT + PADDING * 2;
-        int listH = panelH - (listY - panelY) - PADDING;
+        // Item list area: search box on top, footer counter on bottom, scrollable rows between.
+        int listY = listY();
+        int listH = listH();
 
         graphics.enableScissor(panelX, listY, panelX + WIDTH, listY + listH);
         Font font = Minecraft.getInstance().font;
@@ -125,18 +127,24 @@ public final class ToolboxPanel {
         }
         graphics.disableScissor();
 
-        // Scrollbar (only if list overflows).
+        // Scrollbar (only if list overflows). Stays strictly within the list track so it doesn't
+        // crash into the footer separator.
         int contentH = filteredItems.size() * ROW_HEIGHT;
         if (contentH > listH) {
             int barH = Math.max(20, (int) ((double) listH / contentH * listH));
-            int barY = listY + (int) (scrollOffset / contentH * listH);
+            double frac = (contentH == listH) ? 0 : scrollOffset / (double)(contentH - listH);
+            int barY = listY + (int) (frac * (listH - barH));
             graphics.fill(panelX + WIDTH - 4, barY, panelX + WIDTH - 1, barY + barH, SCROLLBAR);
         }
 
-        // "{count} items" subtitle at the bottom.
-        graphics.drawString(font,
-                Component.literal(filteredItems.size() + " / " + allItems.size()),
-                panelX + PADDING, panelY + panelH - 11, TEXT_DIM, false);
+        // Footer counter — separated from the list by the dedicated FOOTER_HEIGHT strip.
+        int footerY = panelY + panelH - FOOTER_HEIGHT + 2;
+        graphics.fill(panelX, footerY - 2, panelX + WIDTH, footerY - 1, BORDER);
+        String counter = filteredItems.size() == allItems.size()
+                ? allItems.size() + " items"
+                : filteredItems.size() + " of " + allItems.size();
+        graphics.drawString(font, Component.literal(counter),
+                panelX + PADDING, footerY + 2, TEXT_DIM, false);
     }
 
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
@@ -145,8 +153,11 @@ public final class ToolboxPanel {
         if (searchBox != null && searchBox.isMouseOver(mouseX, mouseY)) {
             return false; // let vanilla handle
         }
-        int listY = panelY + SEARCH_HEIGHT + PADDING * 2;
-        if (mouseY < listY) return true; // clicked in header strip but not in EditBox
+        int listY = listY();
+        int listH = listH();
+        // Click in the footer strip — consume but ignore.
+        if (mouseY >= listY + listH) return true;
+        if (mouseY < listY) return true;
         int relY = (int) (mouseY - listY + scrollOffset);
         int index = relY / ROW_HEIGHT;
         if (index < 0 || index >= filteredItems.size()) return true;
@@ -156,13 +167,21 @@ public final class ToolboxPanel {
 
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollY) {
         if (!contains(mouseX, mouseY)) return false;
-        int listY = panelY + SEARCH_HEIGHT + PADDING * 2;
-        int listH = panelH - (listY - panelY) - PADDING;
+        int listH = listH();
         int contentH = filteredItems.size() * ROW_HEIGHT;
         if (contentH <= listH) return true;
         scrollOffset -= scrollY * ROW_HEIGHT * 2;
         scrollOffset = Math.max(0, Math.min(contentH - listH, scrollOffset));
         return true;
+    }
+
+    /** Single source of truth for the scrollable list region — keeps render() and input handlers aligned. */
+    private int listY() {
+        return panelY + SEARCH_HEIGHT + PADDING * 2;
+    }
+
+    private int listH() {
+        return panelH - (listY() - panelY) - FOOTER_HEIGHT - PADDING;
     }
 
     /** Listener delegate compatible with {@link GuiEventListener} for vanilla mouse routing if needed. */

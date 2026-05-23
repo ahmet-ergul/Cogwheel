@@ -57,9 +57,11 @@ public final class RecipePickerScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        // Render the parent (editor) faded behind us so the user keeps context.
-        if (parent != null) parent.render(graphics, -1, -1, partialTick);
-        graphics.fill(0, 0, this.width, this.height, 0xA0000000);
+        // Solid backdrop — we deliberately do NOT render the parent here. ItemRenderer pushes
+        // items to a higher Z than 2D fills, so a translucent dim over a rendered parent always
+        // lets icons bleed through. The user knows where they came from; they don't need to see
+        // the editor under us.
+        graphics.fill(0, 0, this.width, this.height, 0xFF101522);
 
         Font font = Minecraft.getInstance().font;
         graphics.fill(panelX, panelY, panelX + PANEL_WIDTH, panelY + panelH, BG);
