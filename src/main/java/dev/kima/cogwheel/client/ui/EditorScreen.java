@@ -7,6 +7,8 @@ import dev.kima.cogwheel.client.ui.canvas.ContextMenu;
 import dev.kima.cogwheel.client.ui.canvas.DemoDesigns;
 import dev.kima.cogwheel.client.ui.canvas.EdgeValidation;
 import dev.kima.cogwheel.client.ui.canvas.HitTest;
+import dev.kima.cogwheel.client.ui.panel.PropertiesPanel;
+import dev.kima.cogwheel.client.ui.panel.SolverOverlay;
 import dev.kima.cogwheel.client.ui.panel.ToolboxPanel;
 import dev.kima.cogwheel.client.ui.picker.RecipePickerScreen;
 import dev.kima.cogwheel.model.Design;
@@ -15,8 +17,12 @@ import dev.kima.cogwheel.model.Node;
 import dev.kima.cogwheel.model.RecipeNode;
 import dev.kima.cogwheel.model.SourceNode;
 import dev.kima.cogwheel.model.Vec2;
+import dev.kima.cogwheel.persistence.DesignStore;
 import dev.kima.cogwheel.recipe.RecipeEntry;
 import dev.kima.cogwheel.recipe.RecipeNodeFactory;
+import dev.kima.cogwheel.solver.Solver;
+import dev.kima.cogwheel.solver.SolverResult;
+import org.lwjgl.glfw.GLFW;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.Item;
@@ -46,9 +52,15 @@ public class EditorScreen extends Screen {
     private final Canvas canvas = new Canvas();
     private final ContextMenu contextMenu = new ContextMenu();
     private final ToolboxPanel toolbox = new ToolboxPanel(this::onToolboxItemClicked);
+    private final PropertiesPanel properties = new PropertiesPanel(this::replaceSelectedNode, this::onSwapRecipeRequested);
     private Design design = DemoDesigns.ironSmelting();
     private boolean panning = false;
     private int canvasX, canvasY, canvasW, canvasH;
+
+    /** Transient banner. Shown for {@link #BANNER_LIFETIME_MS} after each save / load. */
+    private String banner;
+    private long bannerExpiresAt;
+    private static final long BANNER_LIFETIME_MS = 3000;
 
     public EditorScreen() {
         super(Component.translatable("screen.cogwheel.editor.title"));
@@ -68,23 +80,56 @@ public class EditorScreen extends Screen {
         this.addRenderableWidget(toolbox.createSearchBox(this.font,
                 CANVAS_MARGIN_OTHER, CANVAS_MARGIN_TOP));
 
+        int propertiesX = this.width - CANVAS_MARGIN_OTHER - PropertiesPanel.WIDTH;
+        properties.setLayout(propertiesX, CANVAS_MARGIN_TOP,
+                this.height - CANVAS_MARGIN_TOP - CANVAS_MARGIN_OTHER);
+
         canvasX = CANVAS_MARGIN_OTHER + ToolboxPanel.WIDTH + CANVAS_MARGIN_OTHER;
         canvasY = CANVAS_MARGIN_TOP;
-        canvasW = this.width - canvasX - CANVAS_MARGIN_OTHER;
-        canvasH = this.height - CANVAS_MARGIN_TOP - CANVAS_MARGIN_OTHER;
+        canvasW = propertiesX - CANVAS_MARGIN_OTHER - canvasX;
+        canvasH = this.height - CANVAS_MARGIN_TOP - CANVAS_MARGIN_OTHER - SolverOverlay.HEIGHT;
     }
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         super.render(graphics, mouseX, mouseY, partialTick);
 
+        properties.setSelected(design.findNode(canvas.selectedNodeId()));
+
         CanvasRenderer.render(graphics, canvas, design, canvasX, canvasY, canvasW, canvasH);
         toolbox.render(graphics, mouseX, mouseY);
+        properties.render(graphics, mouseX, mouseY);
+
+        SolverResult solverResult = Solver.solve(design, RebuildTrigger.index());
+        SolverOverlay.render(graphics, solverResult, canvasX, canvasY + canvasH, canvasW);
 
         graphics.drawCenteredString(this.font, this.title, canvasX + canvasW / 2, 8, 0xFFFFFFFF);
+        renderBanner(graphics);
 
         // Context menu renders on top of everything, in screen space (not pose-transformed).
         contextMenu.render(graphics, mouseX, mouseY);
+    }
+
+    private void renderBanner(GuiGraphics graphics) {
+        if (banner == null) return;
+        if (System.currentTimeMillis() > bannerExpiresAt) {
+            banner = null;
+            return;
+        }
+        int w = this.font.width(banner) + 16;
+        int bx = canvasX + canvasW - w - 8;
+        int by = canvasY + 4;
+        graphics.fill(bx, by, bx + w, by + 16, 0xCC1F2233);
+        graphics.fill(bx - 1, by - 1, bx + w + 1, by, 0xFF54607A);
+        graphics.fill(bx - 1, by + 16, bx + w + 1, by + 17, 0xFF54607A);
+        graphics.fill(bx - 1, by, bx, by + 16, 0xFF54607A);
+        graphics.fill(bx + w, by, bx + w + 1, by + 16, 0xFF54607A);
+        graphics.drawString(this.font, banner, bx + 8, by + 4, 0xFFFFFFFF, false);
+    }
+
+    private void showBanner(String text) {
+        this.banner = text;
+        this.bannerExpiresAt = System.currentTimeMillis() + BANNER_LIFETIME_MS;
     }
 
     @Override
@@ -105,6 +150,11 @@ public class EditorScreen extends Screen {
                 return toolbox.mouseClicked(mouseX, mouseY, button);
             }
             return true;
+        }
+
+        // Properties panel gets next chance (right sidebar).
+        if (properties.contains(mouseX, mouseY)) {
+            return properties.mouseClicked(mouseX, mouseY, button);
         }
 
         if (button == MIDDLE_MOUSE_BUTTON) {
@@ -160,6 +210,7 @@ public class EditorScreen extends Screen {
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (properties.mouseReleased(mouseX, mouseY, button)) return true;
         if (button == MIDDLE_MOUSE_BUTTON) {
             panning = false;
             return true;
@@ -187,6 +238,7 @@ public class EditorScreen extends Screen {
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        if (properties.mouseDragged(mouseX, mouseY, button, dragX, dragY)) return true;
         if (panning) {
             canvas.pan(dragX, dragY);
             return true;
@@ -213,6 +265,47 @@ public class EditorScreen extends Screen {
         }
         canvas.zoomAt(mouseX, mouseY, scrollY);
         return true;
+    }
+
+    private void replaceSelectedNode(Node updated) {
+        if (canvas.selectedNodeId() == null) return;
+        design = design.withNodeReplaced(canvas.selectedNodeId(), updated);
+    }
+
+    private void onSwapRecipeRequested() {
+        Node selected = design.findNode(canvas.selectedNodeId());
+        if (!(selected instanceof RecipeNode rn)) return;
+        if (rn.outputs().isEmpty()) return;
+        ItemStack primaryOutput = rn.outputs().get(0).display();
+        if (primaryOutput.isEmpty()) return;
+
+        List<RecipeEntry> ways = RebuildTrigger.index().waysToProduce(primaryOutput.getItem());
+        if (ways.isEmpty()) return;
+        if (ways.size() == 1) {
+            // Only one path — replace anyway in case the recipe id changed under us.
+            RecipeNode replacement = RecipeNodeFactory.fromRecipeEntry(ways.get(0), rn.position())
+                    .withParallelism(rn.parallelism());
+            design = design.withNodeReplaced(rn.id(), withId(replacement, rn.id()));
+            return;
+        }
+        Minecraft.getInstance().setScreen(new RecipePickerScreen(
+                this,
+                Component.literal(primaryOutput.getHoverName().getString()),
+                ways,
+                chosen -> {
+                    RecipeNode replacement = RecipeNodeFactory.fromRecipeEntry(chosen, rn.position())
+                            .withParallelism(rn.parallelism());
+                    design = design.withNodeReplaced(rn.id(), withId(replacement, rn.id()));
+                }));
+    }
+
+    /**
+     * RecipeNodeFactory assigns a fresh UUID; when SWAPPING we want to preserve the old one so any
+     * edges connected to this node keep working. Construct a copy of {@code from} with the supplied id.
+     */
+    private static RecipeNode withId(RecipeNode from, java.util.UUID id) {
+        return new RecipeNode(id, from.position(), from.recipeId(), from.title(), from.icon(),
+                from.inputs(), from.outputs(), from.parallelism());
     }
 
     private void onToolboxItemClicked(Item item) {
@@ -244,6 +337,31 @@ public class EditorScreen extends Screen {
                     design = design.withNodeAdded(node);
                     canvas.setSelectedNodeId(node.id());
                 }));
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        // Allow the EditBox / other vanilla widgets to consume keys first (typing in the search box
+        // shouldn't trigger Ctrl+S).
+        if (super.keyPressed(keyCode, scanCode, modifiers)) return true;
+
+        boolean ctrl = (modifiers & GLFW.GLFW_MOD_CONTROL) != 0;
+        if (ctrl && keyCode == GLFW.GLFW_KEY_S) {
+            boolean ok = DesignStore.save(design);
+            showBanner(ok ? "Saved" : "Save failed (see log)");
+            return true;
+        }
+        if (ctrl && keyCode == GLFW.GLFW_KEY_O) {
+            DesignStore.load().ifPresentOrElse(
+                    loaded -> {
+                        design = loaded;
+                        canvas.clearSelection();
+                        showBanner("Loaded");
+                    },
+                    () -> showBanner("No saved design"));
+            return true;
+        }
+        return false;
     }
 
     @Override

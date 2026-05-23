@@ -31,6 +31,18 @@ public record Design(
         return new Design(name, List.copyOf(updated), edges);
     }
 
+    /**
+     * Replace a node in-place (preserves its position in the list, but uses {@code replacement} as-is).
+     * Callers are responsible for making sure {@code replacement.id().equals(id)} so edges keep working.
+     */
+    public Design withNodeReplaced(UUID id, Node replacement) {
+        List<Node> updated = new ArrayList<>(nodes.size());
+        for (Node n : nodes) {
+            updated.add(n.id().equals(id) ? replacement : n);
+        }
+        return new Design(name, List.copyOf(updated), edges);
+    }
+
     public Design withNodeAdded(Node node) {
         List<Node> updated = new ArrayList<>(nodes);
         updated.add(node);

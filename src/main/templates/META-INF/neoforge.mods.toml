@@ -35,3 +35,11 @@ description='''${mod_description}'''
     versionRange="[6.0.10,)"
     ordering="AFTER"
     side="CLIENT"
+
+# JEI is OPTIONAL: when present, brewing/anvil/fuel/composter virtual recipes are added to the index.
+[[dependencies.${mod_id}]]
+    modId="jei"
+    type="optional"
+    versionRange="[19.27.0,)"
+    ordering="AFTER"
+    side="CLIENT"

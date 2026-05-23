@@ -43,4 +43,8 @@ public record SourceNode(
     public SourceNode withPosition(Vec2 newPosition) {
         return new SourceNode(id, newPosition, item, kind);
     }
+
+    public SourceNode withKind(Kind newKind) {
+        return new SourceNode(id, position, item, newKind);
+    }
 }

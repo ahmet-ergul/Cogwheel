@@ -24,7 +24,11 @@ repositories {
         name = "tterrag maven"
         url = "https://maven.ithundxr.dev/snapshots"
     }
-    // Phase 8 will turn on the JEI maven (https://maven.blamejared.com/) and EMI maven (https://maven.terraformersmc.com/).
+    // JEI (Phase 8)
+    maven {
+        name = "Jared's Maven (JEI)"
+        url = "https://maven.blamejared.com/"
+    }
 }
 
 neoForge {
@@ -75,12 +79,13 @@ dependencies {
     localRuntime "net.createmod.ponder:ponder-neoforge:1.0.82+mc${minecraft_version}"
     localRuntime "dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:1.0.6"
 
-    // Phase 8: optional JEI bridge.
-    //   compileOnly "mezz.jei:jei-${minecraft_version}-common-api:<jei_version>"
-    //   compileOnly "mezz.jei:jei-${minecraft_version}-neoforge-api:<jei_version>"
-    //   localRuntime "mezz.jei:jei-${minecraft_version}-neoforge:<jei_version>"
+    // JEI — optional integration bridge surfaces virtual categories that don't go through
+    // RecipeManager (brewing, anvil, fuels, composter).
+    compileOnly "mezz.jei:jei-${minecraft_version}-common-api:19.27.0.340"
+    compileOnly "mezz.jei:jei-${minecraft_version}-neoforge-api:19.27.0.340"
+    localRuntime "mezz.jei:jei-${minecraft_version}-neoforge:19.27.0.340"
 
-    // Phase 8: optional EMI bridge.
+    // Phase 8 (future): EMI bridge — same idea, different API.
     //   compileOnly "dev.emi:emi-neoforge:<emi_version>+${minecraft_version}:api"
     //   localRuntime "dev.emi:emi-neoforge:<emi_version>+${minecraft_version}"
 }

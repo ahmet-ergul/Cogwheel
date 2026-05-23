@@ -1,9 +1,11 @@
 package dev.kima.cogwheel.recipe.source;
 
 import dev.kima.cogwheel.CogwheelConstants;
+import dev.kima.cogwheel.integration.jei.JeiBridge;
 import dev.kima.cogwheel.recipe.RecipeIndex;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.ModList;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.RecipesUpdatedEvent;
@@ -48,7 +50,29 @@ public final class RebuildTrigger {
 
     private static void rebuild() {
         VanillaRecipeSource.populate(INDEX);
+        if (ModList.get().isLoaded("jei")) {
+            int before = INDEX.size();
+            JeiBridge.addToIndex(INDEX);
+            int added = INDEX.size() - before;
+            if (added > 0) {
+                CogwheelConstants.LOG.info("RecipeIndex: +{} virtual entries from JEI bridge", added);
+            }
+        }
         BUILT.set(true);
+    }
+
+    /**
+     * Called from {@link JeiBridge#setEntries} when JEI's runtime finishes loading. If our index is
+     * already built (typical case — vanilla recipes synced before JEI's plugin lifecycle
+     * completes), splice the cached JEI entries in directly without a full rebuild.
+     */
+    public static void onJeiContribution() {
+        if (BUILT.get()) {
+            int before = INDEX.size();
+            JeiBridge.addToIndex(INDEX);
+            int added = INDEX.size() - before;
+            CogwheelConstants.LOG.info("RecipeIndex: +{} virtual entries spliced in by JEI bridge", added);
+        }
     }
 
     @SubscribeEvent

@@ -29,4 +29,9 @@ public record RecipeNode(
     public RecipeNode withPosition(Vec2 newPosition) {
         return new RecipeNode(id, newPosition, recipeId, title, icon, inputs, outputs, parallelism);
     }
+
+    public RecipeNode withParallelism(int newParallelism) {
+        int clamped = Math.max(1, Math.min(256, newParallelism));
+        return new RecipeNode(id, position, recipeId, title, icon, inputs, outputs, clamped);
+    }
 }
