@@ -1,0 +1,13 @@
+{
+  "key.categories.cogwheel": "Cogwheel",
+  "key.cogwheel.open_editor": "Open Factory Editor",
+  "screen.cogwheel.editor.title": "Cogwheel",
+  "screen.cogwheel.toolbox.search": "Search items",
+  "screen.cogwheel.recipe_picker": "Choose recipe for %s",
+
+  "node.cogwheel.source.manual": "Source",
+  "node.cogwheel.source.external_factory": "External Factory",
+  "node.cogwheel.source.drop": "Mob Drop",
+  "node.cogwheel.source.infinite": "Infinite",
+  "node.cogwheel.sink": "Sink"
+}

@@ -1,0 +1,118 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.141'
+    id 'idea'
+}
+
+version = mod_version
+group = mod_group_id
+
+base {
+    archivesName = mod_id
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+repositories {
+    // Create + Ponder + Flywheel
+    maven {
+        name = "Create Mod Maven"
+        url = "https://maven.createmod.net"
+    }
+    // Registrate (tterrag)
+    maven {
+        name = "tterrag maven"
+        url = "https://maven.ithundxr.dev/snapshots"
+    }
+    // Phase 8 will turn on the JEI maven (https://maven.blamejared.com/) and EMI maven (https://maven.terraformersmc.com/).
+}
+
+neoForge {
+    version = project.neo_version
+
+    parchment {
+        mappingsVersion = project.parchment_mappings_version
+        minecraftVersion = project.parchment_minecraft_version
+    }
+
+    runs {
+        client {
+            client()
+            systemProperty 'forge.logging.markers', 'REGISTRIES'
+            logLevel = org.slf4j.event.Level.DEBUG
+        }
+    }
+
+    mods {
+        "${mod_id}" {
+            sourceSet(sourceSets.main)
+        }
+    }
+}
+
+configurations {
+    runtimeClasspath.extendsFrom localRuntime
+}
+
+dependencies {
+    // Create — compileOnly so Cogwheel still builds and runs without it. Adapter code is gated by
+    // ModList.isLoaded("create") at runtime. See https://wiki.createmod.net/developers/depend-on-create/neoforge-1.21.1
+    compileOnly(group: "com.simibubi.create", name: "create-${minecraft_version}", version: "6.0.10-280", classifier: "slim") {
+        transitive = false
+    }
+    compileOnly "com.tterrag.registrate:Registrate:MC1.21-1.3.0+67"
+    compileOnly "net.createmod.ponder:ponder-neoforge:1.0.82+mc${minecraft_version}"
+    compileOnly "dev.engine-room.flywheel:flywheel-neoforge-api-${minecraft_version}:1.0.6"
+
+    // Dev runtime: include Create (slim, no transitive integrations) so /cogwheel debug
+    // recipes-by-type create:mixing actually returns rows. The non-slim Create jar tries to pull
+    // FTB Chunks, journeymap, curios, cc-tweaked, etc. — all unwanted in our dev environment.
+    // NOT a hard runtime dep on shipped mod — neoforge.mods.toml marks Create as optional.
+    localRuntime(group: "com.simibubi.create", name: "create-${minecraft_version}", version: "6.0.10-280", classifier: "slim") {
+        transitive = false
+    }
+    localRuntime "com.tterrag.registrate:Registrate:MC1.21-1.3.0+67"
+    localRuntime "net.createmod.ponder:ponder-neoforge:1.0.82+mc${minecraft_version}"
+    localRuntime "dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:1.0.6"
+
+    // Phase 8: optional JEI bridge.
+    //   compileOnly "mezz.jei:jei-${minecraft_version}-common-api:<jei_version>"
+    //   compileOnly "mezz.jei:jei-${minecraft_version}-neoforge-api:<jei_version>"
+    //   localRuntime "mezz.jei:jei-${minecraft_version}-neoforge:<jei_version>"
+
+    // Phase 8: optional EMI bridge.
+    //   compileOnly "dev.emi:emi-neoforge:<emi_version>+${minecraft_version}:api"
+    //   localRuntime "dev.emi:emi-neoforge:<emi_version>+${minecraft_version}"
+}
+
+var generateModMetadata = tasks.register("generateModMetadata", ProcessResources) {
+    var replaceProperties = [
+            minecraft_version      : minecraft_version,
+            minecraft_version_range: minecraft_version_range,
+            neo_version            : neo_version,
+            loader_version_range   : loader_version_range,
+            mod_id                 : mod_id,
+            mod_name               : mod_name,
+            mod_license            : mod_license,
+            mod_version            : mod_version,
+            mod_authors            : mod_authors,
+            mod_description        : mod_description,
+    ]
+    inputs.properties replaceProperties
+    expand replaceProperties
+    from "src/main/templates"
+    into "build/generated/sources/modMetadata"
+}
+sourceSets.main.resources.srcDir generateModMetadata
+neoForge.ideSyncTask generateModMetadata
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+idea {
+    module {
+        downloadSources = true
+        downloadJavadoc = true
+    }
+}

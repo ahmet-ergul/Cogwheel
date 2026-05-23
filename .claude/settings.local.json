@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "WebFetch(domain:docs.neoforged.net)",
+      "WebFetch(domain:lexxie.dev)",
+      "Bash(dir C:\\\\Users\\\\shift\\\\Projects\\\\Cogwheel)"
+    ]
+  }
+}
