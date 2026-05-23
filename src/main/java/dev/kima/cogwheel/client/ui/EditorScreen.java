@@ -14,14 +14,17 @@ import dev.kima.cogwheel.client.ui.panel.SolverOverlay;
 import dev.kima.cogwheel.client.ui.picker.RecipePickerScreen;
 import dev.kima.cogwheel.model.Design;
 import dev.kima.cogwheel.model.Edge;
+import dev.kima.cogwheel.model.Factory;
+import dev.kima.cogwheel.model.FactoryStore;
 import dev.kima.cogwheel.model.MergerNode;
 import dev.kima.cogwheel.model.Node;
+import dev.kima.cogwheel.model.OutputNode;
 import dev.kima.cogwheel.model.RecipeNode;
 import dev.kima.cogwheel.model.SinkNode;
 import dev.kima.cogwheel.model.SourceNode;
 import dev.kima.cogwheel.model.SplitterNode;
 import dev.kima.cogwheel.model.Vec2;
-import dev.kima.cogwheel.persistence.DesignStore;
+import dev.kima.cogwheel.persistence.FactoryFileStore;
 import dev.kima.cogwheel.recipe.RecipeEntry;
 import dev.kima.cogwheel.recipe.RecipeNodeFactory;
 import dev.kima.cogwheel.recipe.source.RebuildTrigger;
@@ -56,6 +59,9 @@ public class EditorScreen extends Screen {
     private static final int TOGGLE_SIZE = 22;
     private static final int TOGGLE_MARGIN = 8;
 
+    /** Loaded once per game session — subsequent EditorScreen opens reuse the singleton FactoryStore. */
+    private static boolean storeLoaded = false;
+
     private final Canvas canvas = new Canvas();
     private final ContextMenu contextMenu = new ContextMenu();
     private LeftPanel leftPanel;
@@ -63,7 +69,7 @@ public class EditorScreen extends Screen {
             this::replaceSelectedNode,
             this::onSwapRecipeRequested,
             () -> propertiesPanelClosed = true);
-    private Design design = DemoDesigns.ironSmelting();
+    private Design design;
     private boolean panning = false;
     private int canvasX, canvasY, canvasW, canvasH;
 
@@ -88,6 +94,18 @@ public class EditorScreen extends Screen {
                 "EditorScreen opened with RecipeIndex size = {}",
                 RebuildTrigger.index().size());
 
+        // Load factory store from disk on the first open in this game session. Subsequent opens
+        // reuse the singleton's in-memory state so unsaved edits don't get clobbered.
+        if (!storeLoaded) {
+            FactoryFileStore.load();
+            storeLoaded = true;
+        }
+        if (FactoryStore.get().current() == null) {
+            FactoryStore.get().bootstrapIfEmpty("Default Factory");
+            FactoryStore.get().updateCurrent(DemoDesigns.ironSmelting());
+        }
+        design = FactoryStore.get().current().design();
+
         LeftPanelPage.WidgetHost widgetHost = new LeftPanelPage.WidgetHost() {
             @Override
             public void register(EditBox widget) {
@@ -106,11 +124,60 @@ public class EditorScreen extends Screen {
                         this::addSourceNode,
                         this::addSinkNode,
                         this::addSplitterNode,
-                        this::addMergerNode),
+                        this::addMergerNode,
+                        this::addOutputNode,
+                        this::switchFactory,
+                        this::createFactory,
+                        this::deleteFactory,
+                        this::renameFactory),
                 null);
 
-        // Layout depends on which panels are visible; recompute now and again per render frame.
         recomputeLayout();
+    }
+
+    /** Set the current design AND propagate to the factory store so persistence stays in sync. */
+    private void setDesign(Design newDesign) {
+        this.design = newDesign;
+        FactoryStore.get().updateCurrent(newDesign);
+    }
+
+    private void switchFactory(java.util.UUID factoryId) {
+        FactoryStore.get().switchTo(factoryId);
+        Factory now = FactoryStore.get().current();
+        if (now != null) {
+            this.design = now.design();
+            canvas.clearSelection();
+            canvas.setSelectedEdge(null);
+            showBanner("Switched to: " + now.name());
+        }
+    }
+
+    private void createFactory(String name) {
+        Factory created = FactoryStore.get().createFactory(name);
+        this.design = created.design();
+        canvas.clearSelection();
+        canvas.setSelectedEdge(null);
+        showBanner("Created: " + created.name());
+    }
+
+    private void deleteFactory(java.util.UUID factoryId) {
+        Factory victim = FactoryStore.get().findById(factoryId);
+        String name = victim != null ? victim.name() : "factory";
+        FactoryStore.get().delete(factoryId);
+        Factory now = FactoryStore.get().current();
+        if (now == null) {
+            FactoryStore.get().bootstrapIfEmpty("Default Factory");
+            now = FactoryStore.get().current();
+        }
+        this.design = now.design();
+        canvas.clearSelection();
+        canvas.setSelectedEdge(null);
+        showBanner("Deleted: " + name);
+    }
+
+    private void renameFactory(java.util.UUID factoryId, String newName) {
+        FactoryStore.get().rename(factoryId, newName);
+        showBanner("Renamed");
     }
 
     /**
@@ -299,7 +366,7 @@ public class EditorScreen extends Screen {
                 Node node = nodeHit.get();
                 contextMenu.show((int) mouseX, (int) mouseY, List.of(
                         new ContextMenu.Option("Delete node", () -> {
-                            design = design.withNodeRemoved(node.id());
+                            setDesign(design.withNodeRemoved(node.id()));
                             if (node.id().equals(canvas.selectedNodeId())) {
                                 canvas.clearSelection();
                             }
@@ -310,7 +377,7 @@ public class EditorScreen extends Screen {
             if (edgeHit.isPresent()) {
                 Edge edge = edgeHit.get();
                 contextMenu.show((int) mouseX, (int) mouseY, List.of(
-                        new ContextMenu.Option("Delete edge", () -> design = design.withEdgeRemoved(edge))));
+                        new ContextMenu.Option("Delete edge", () -> setDesign(design.withEdgeRemoved(edge)))));
                 return true;
             }
             return true;
@@ -332,10 +399,10 @@ public class EditorScreen extends Screen {
                 if (drop.isPresent() && EdgeValidation.canConnect(design, canvas.pendingEdgeFrom(), drop.get())) {
                     HitTest.PortHit from = canvas.pendingEdgeFrom();
                     HitTest.PortHit to = drop.get();
-                    design = design.withEdgeAdded(new Edge(
+                    setDesign(design.withEdgeAdded(new Edge(
                             from.node().id(), from.port().index(),
                             to.node().id(), to.port().index(),
-                            0.0));
+                            0.0)));
                 }
                 canvas.endEdgeDrag();
                 return true;
@@ -361,7 +428,7 @@ public class EditorScreen extends Screen {
             }
             if (canvas.draggingNodeId() != null) {
                 Vec2 newPos = canvas.currentDragTarget(world.x(), world.y());
-                design = design.withNodeMoved(canvas.draggingNodeId(), newPos);
+                setDesign(design.withNodeMoved(canvas.draggingNodeId(), newPos));
                 return true;
             }
         }
@@ -393,7 +460,7 @@ public class EditorScreen extends Screen {
         }
         if (ways.size() == 1) {
             RecipeNode node = RecipeNodeFactory.fromRecipeEntry(ways.get(0), placement);
-            design = design.withNodeAdded(node);
+            setDesign(design.withNodeAdded(node));
             canvas.setSelectedNodeId(node.id());
             return;
         }
@@ -404,7 +471,7 @@ public class EditorScreen extends Screen {
                 ways,
                 chosen -> {
                     RecipeNode node = RecipeNodeFactory.fromRecipeEntry(chosen, placement);
-                    design = design.withNodeAdded(node);
+                    setDesign(design.withNodeAdded(node));
                     canvas.setSelectedNodeId(node.id());
                 }));
     }
@@ -415,31 +482,37 @@ public class EditorScreen extends Screen {
 
     private void addSourceAt(Item item, Vec2 placement) {
         SourceNode node = RecipeNodeFactory.source(item, placement);
-        design = design.withNodeAdded(node);
+        setDesign(design.withNodeAdded(node));
         canvas.setSelectedNodeId(node.id());
     }
 
     private void addSinkNode(Item item) {
         SinkNode node = new SinkNode(UUID.randomUUID(), canvasCenter(), new ItemStack(item));
-        design = design.withNodeAdded(node);
+        setDesign(design.withNodeAdded(node));
         canvas.setSelectedNodeId(node.id());
     }
 
     private void addSplitterNode() {
         SplitterNode node = new SplitterNode(UUID.randomUUID(), canvasCenter(), SplitterNode.DEFAULT_OUTPUTS);
-        design = design.withNodeAdded(node);
+        setDesign(design.withNodeAdded(node));
         canvas.setSelectedNodeId(node.id());
     }
 
     private void addMergerNode() {
         MergerNode node = new MergerNode(UUID.randomUUID(), canvasCenter(), MergerNode.DEFAULT_INPUTS);
-        design = design.withNodeAdded(node);
+        setDesign(design.withNodeAdded(node));
+        canvas.setSelectedNodeId(node.id());
+    }
+
+    private void addOutputNode(Item item) {
+        OutputNode node = dev.kima.cogwheel.recipe.RecipeNodeFactory.output(item, canvasCenter());
+        setDesign(design.withNodeAdded(node));
         canvas.setSelectedNodeId(node.id());
     }
 
     private void replaceSelectedNode(Node updated) {
         if (canvas.selectedNodeId() == null) return;
-        design = design.withNodeReplaced(canvas.selectedNodeId(), updated);
+        setDesign(design.withNodeReplaced(canvas.selectedNodeId(), updated));
     }
 
     private void onSwapRecipeRequested() {
@@ -455,7 +528,7 @@ public class EditorScreen extends Screen {
             // Only one path — replace anyway in case the recipe id changed under us.
             RecipeNode replacement = RecipeNodeFactory.fromRecipeEntry(ways.get(0), rn.position())
                     .withParallelism(rn.parallelism());
-            design = design.withNodeReplaced(rn.id(), withId(replacement, rn.id()));
+            setDesign(design.withNodeReplaced(rn.id(), withId(replacement, rn.id())));
             return;
         }
         Minecraft.getInstance().setScreen(new RecipePickerScreen(
@@ -465,7 +538,7 @@ public class EditorScreen extends Screen {
                 chosen -> {
                     RecipeNode replacement = RecipeNodeFactory.fromRecipeEntry(chosen, rn.position())
                             .withParallelism(rn.parallelism());
-                    design = design.withNodeReplaced(rn.id(), withId(replacement, rn.id()));
+                    setDesign(design.withNodeReplaced(rn.id(), withId(replacement, rn.id())));
                 }));
     }
 
@@ -488,13 +561,13 @@ public class EditorScreen extends Screen {
         if (keyCode == GLFW.GLFW_KEY_DELETE || keyCode == GLFW.GLFW_KEY_BACKSPACE) {
             Edge sEdge = canvas.selectedEdge();
             if (sEdge != null) {
-                design = design.withEdgeRemoved(sEdge);
+                setDesign(design.withEdgeRemoved(sEdge));
                 canvas.setSelectedEdge(null);
                 return true;
             }
             UUID sNode = canvas.selectedNodeId();
             if (sNode != null) {
-                design = design.withNodeRemoved(sNode);
+                setDesign(design.withNodeRemoved(sNode));
                 canvas.clearSelection();
                 return true;
             }
@@ -503,18 +576,22 @@ public class EditorScreen extends Screen {
 
         boolean ctrl = (modifiers & GLFW.GLFW_MOD_CONTROL) != 0;
         if (ctrl && keyCode == GLFW.GLFW_KEY_S) {
-            boolean ok = DesignStore.save(design);
+            boolean ok = FactoryFileStore.save();
             showBanner(ok ? "Saved" : "Save failed (see log)");
             return true;
         }
         if (ctrl && keyCode == GLFW.GLFW_KEY_O) {
-            DesignStore.load().ifPresentOrElse(
-                    loaded -> {
-                        design = loaded;
-                        canvas.clearSelection();
-                        showBanner("Loaded");
-                    },
-                    () -> showBanner("No saved design"));
+            if (FactoryFileStore.load()) {
+                Factory now = FactoryStore.get().current();
+                if (now != null) {
+                    this.design = now.design();
+                    canvas.clearSelection();
+                    canvas.setSelectedEdge(null);
+                }
+                showBanner("Reloaded from disk");
+            } else {
+                showBanner("No saved store");
+            }
             return true;
         }
         return false;

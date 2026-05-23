@@ -1,7 +1,12 @@
 package dev.kima.cogwheel.client.ui.panel;
 
+import dev.kima.cogwheel.client.ui.modal.TextInputModal;
+import dev.kima.cogwheel.client.ui.picker.ExternalOutputPickerScreen;
+import dev.kima.cogwheel.model.Factory;
+import dev.kima.cogwheel.model.FactoryStore;
 import dev.kima.cogwheel.model.MergerNode;
 import dev.kima.cogwheel.model.Node;
+import dev.kima.cogwheel.model.OutputNode;
 import dev.kima.cogwheel.model.Port;
 import dev.kima.cogwheel.model.RecipeNode;
 import dev.kima.cogwheel.model.SinkNode;
@@ -10,7 +15,9 @@ import dev.kima.cogwheel.model.SplitterNode;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.network.chat.Component;
 
+import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
@@ -118,6 +125,8 @@ public final class PropertiesPanel {
             renderRecipe(graphics, font, rn, contentY, mouseX, mouseY);
         } else if (selected instanceof SinkNode sn) {
             renderSink(graphics, font, sn, contentY);
+        } else if (selected instanceof OutputNode out) {
+            renderOutput(graphics, font, out, contentY, mouseX, mouseY);
         } else if (selected instanceof SplitterNode splitter) {
             renderCountSlider(graphics, font, contentY,
                     "Outputs: " + splitter.outputCount(),
@@ -140,6 +149,43 @@ public final class PropertiesPanel {
         graphics.renderItem(src.item(), panelX + PADDING, itemY + ROW_HEIGHT);
         graphics.drawString(font, src.item().getHoverName().getString(),
                 panelX + PADDING + 20, itemY + ROW_HEIGHT + 4, TEXT, false);
+
+        // EXTERNAL_FACTORY sources get a bind-to-output panel.
+        if (src.kind() == SourceNode.Kind.EXTERNAL_FACTORY) {
+            int refY = itemY + ROW_HEIGHT * 2 + PADDING * 2;
+            graphics.drawString(font, "External Output", panelX + PADDING, refY, TEXT_DIM, false);
+            String refText = src.externalRef()
+                    .map(ref -> {
+                        Factory f = FactoryStore.get().findById(ref.factoryId());
+                        if (f == null) return "(missing factory)";
+                        Optional<OutputNode> out = FactoryStore.get().resolveOutput(ref);
+                        return f.name() + " · " + out.map(OutputNode::exportName).orElse("(missing)");
+                    })
+                    .orElse("Not bound");
+            graphics.drawString(font, truncate(font, refText, WIDTH - PADDING * 2),
+                    panelX + PADDING, refY + ROW_HEIGHT, TEXT, false);
+            int refBtnY = refY + ROW_HEIGHT * 2;
+            drawButton(graphics, panelX + PADDING, refBtnY, WIDTH - PADDING * 2, BUTTON_HEIGHT,
+                    "Bind to output…", mouseX, mouseY);
+        }
+    }
+
+    private void renderOutput(GuiGraphics graphics, Font font, OutputNode out, int y, int mouseX, int mouseY) {
+        graphics.drawString(font, "Export name", panelX + PADDING, y, TEXT_DIM, false);
+        int btnY = y + ROW_HEIGHT;
+        String label = out.exportName().isEmpty() ? "(rename…)" : out.exportName();
+        drawButton(graphics, panelX + PADDING, btnY, WIDTH - PADDING * 2, BUTTON_HEIGHT,
+                label, mouseX, mouseY);
+
+        int itemY = btnY + BUTTON_HEIGHT + PADDING * 2;
+        graphics.drawString(font, "Item", panelX + PADDING, itemY, TEXT_DIM, false);
+        graphics.renderItem(out.item(), panelX + PADDING, itemY + ROW_HEIGHT);
+        graphics.drawString(font, out.item().getHoverName().getString(),
+                panelX + PADDING + 20, itemY + ROW_HEIGHT + 4, TEXT, false);
+
+        int hintY = itemY + ROW_HEIGHT * 2 + PADDING * 2;
+        graphics.drawString(font, "Exposed to other factories",
+                panelX + PADDING, hintY, TEXT_DIM, false);
     }
 
     private void renderRecipe(GuiGraphics graphics, Font font, RecipeNode rn, int y, int mouseX, int mouseY) {
@@ -229,6 +275,35 @@ public final class PropertiesPanel {
                 SourceNode.Kind[] kinds = SourceNode.Kind.values();
                 int next = (src.kind().ordinal() + 1) % kinds.length;
                 onNodeUpdated.accept(src.withKind(kinds[next]));
+                return true;
+            }
+            // Bind-to-output button (only when kind is EXTERNAL_FACTORY).
+            if (src.kind() == SourceNode.Kind.EXTERNAL_FACTORY) {
+                int itemY = btnY + BUTTON_HEIGHT + PADDING * 2;
+                int refY = itemY + ROW_HEIGHT * 2 + PADDING * 2;
+                int refBtnY = refY + ROW_HEIGHT * 2;
+                if (hits(sx, sy, panelX + PADDING, refBtnY, WIDTH - PADDING * 2, BUTTON_HEIGHT)) {
+                    Minecraft.getInstance().setScreen(new ExternalOutputPickerScreen(
+                            Minecraft.getInstance().screen,
+                            ref -> {
+                                Optional<OutputNode> resolved = FactoryStore.get().resolveOutput(ref);
+                                SourceNode updated = src.withExternalRef(ref);
+                                if (resolved.isPresent()) {
+                                    updated = updated.withItem(resolved.get().item());
+                                }
+                                onNodeUpdated.accept(updated);
+                            }));
+                    return true;
+                }
+            }
+        } else if (selected instanceof OutputNode out) {
+            int btnY = contentY + ROW_HEIGHT;
+            if (hits(sx, sy, panelX + PADDING, btnY, WIDTH - PADDING * 2, BUTTON_HEIGHT)) {
+                Minecraft.getInstance().setScreen(new TextInputModal(
+                        Minecraft.getInstance().screen,
+                        Component.literal("Rename output"),
+                        out.exportName(),
+                        newName -> onNodeUpdated.accept(out.withExportName(newName))));
                 return true;
             }
         } else if (selected instanceof RecipeNode rn) {

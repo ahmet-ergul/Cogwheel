@@ -43,7 +43,12 @@ public final class LeftPanel {
             Consumer<Item> onAddSource,
             Consumer<Item> onAddSink,
             Runnable onAddSplitter,
-            Runnable onAddMerger
+            Runnable onAddMerger,
+            Consumer<Item> onAddOutput,
+            java.util.function.Consumer<java.util.UUID> onSwitchFactory,
+            Consumer<String> onCreateFactory,
+            java.util.function.Consumer<java.util.UUID> onDeleteFactory,
+            java.util.function.BiConsumer<java.util.UUID, String> onRenameFactory
     ) {}
 
     private final LeftPanelPage.WidgetHost widgetHost;
@@ -249,12 +254,33 @@ public final class LeftPanel {
                                 true,
                                 () -> pushPage(makeSinksListPage())),
                         new CategoriesPage.Category(
+                                new ItemStack(Items.ENDER_CHEST),
+                                Component.translatable("screen.cogwheel.category.outputs"),
+                                Component.translatable("screen.cogwheel.category.outputs.subtitle"),
+                                true,
+                                () -> pushPage(makeOutputsListPage())),
+                        new CategoriesPage.Category(
                                 new ItemStack(Items.COMPARATOR),
                                 Component.translatable("screen.cogwheel.category.logic"),
                                 Component.translatable("screen.cogwheel.category.logic.subtitle"),
                                 true,
-                                () -> pushPage(buildLogicPage()))
+                                () -> pushPage(buildLogicPage())),
+                        new CategoriesPage.Category(
+                                new ItemStack(Items.BOOK),
+                                Component.translatable("screen.cogwheel.category.factories"),
+                                Component.translatable("screen.cogwheel.category.factories.subtitle"),
+                                true,
+                                () -> pushPage(new FactoriesPage(callbacks)))
                 ));
+    }
+
+    private LeftPanelPage makeOutputsListPage() {
+        List<Item> items = new ArrayList<>(index.indexedItems());
+        items.sort(Comparator.comparing(LeftPanel::displayName, String.CASE_INSENSITIVE_ORDER));
+        return new ItemListPage(
+                Component.translatable("screen.cogwheel.category.outputs"),
+                items,
+                callbacks.onAddOutput());
     }
 
     private CategoriesPage buildLogicPage() {

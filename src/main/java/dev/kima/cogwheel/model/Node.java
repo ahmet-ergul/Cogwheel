@@ -12,7 +12,7 @@ import java.util.UUID;
  * <p>Sealed because the renderer + (later) solver branch on the concrete kind, and a closed
  * variant set lets the compiler enforce exhaustiveness.
  */
-public sealed interface Node permits SourceNode, RecipeNode, SinkNode, SplitterNode, MergerNode {
+public sealed interface Node permits SourceNode, RecipeNode, SinkNode, SplitterNode, MergerNode, OutputNode {
     UUID id();
     Vec2 position();
     List<Port> inputs();

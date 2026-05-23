@@ -5,8 +5,11 @@ import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import dev.kima.cogwheel.model.Design;
 import dev.kima.cogwheel.model.Edge;
+import dev.kima.cogwheel.model.ExternalRef;
+import dev.kima.cogwheel.model.Factory;
 import dev.kima.cogwheel.model.MergerNode;
 import dev.kima.cogwheel.model.Node;
+import dev.kima.cogwheel.model.OutputNode;
 import dev.kima.cogwheel.model.Port;
 import dev.kima.cogwheel.model.PortType;
 import dev.kima.cogwheel.model.RecipeNode;
@@ -14,6 +17,10 @@ import dev.kima.cogwheel.model.SinkNode;
 import dev.kima.cogwheel.model.SourceNode;
 import dev.kima.cogwheel.model.SplitterNode;
 import dev.kima.cogwheel.model.Vec2;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 import net.minecraft.core.UUIDUtil;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
@@ -64,11 +71,17 @@ public final class DesignCodecs {
             SourceNode.Kind::valueOf,
             SourceNode.Kind::name);
 
+    public static final Codec<ExternalRef> EXTERNAL_REF = RecordCodecBuilder.create(i -> i.group(
+            UUIDUtil.CODEC.fieldOf("factory_id").forGetter(ExternalRef::factoryId),
+            UUIDUtil.CODEC.fieldOf("output_node_id").forGetter(ExternalRef::outputNodeId)
+    ).apply(i, ExternalRef::new));
+
     public static final MapCodec<SourceNode> SOURCE_NODE = RecordCodecBuilder.mapCodec(i -> i.group(
             UUIDUtil.CODEC.fieldOf("id").forGetter(SourceNode::id),
             VEC2.fieldOf("position").forGetter(SourceNode::position),
             ITEM_STACK.fieldOf("item").forGetter(SourceNode::item),
-            SOURCE_KIND.fieldOf("kind").forGetter(SourceNode::kind)
+            SOURCE_KIND.fieldOf("kind").forGetter(SourceNode::kind),
+            EXTERNAL_REF.optionalFieldOf("external_ref").forGetter(SourceNode::externalRef)
     ).apply(i, SourceNode::new));
 
     public static final MapCodec<RecipeNode> RECIPE_NODE = RecordCodecBuilder.mapCodec(i -> i.group(
@@ -100,6 +113,13 @@ public final class DesignCodecs {
             Codec.INT.fieldOf("input_count").forGetter(MergerNode::inputCount)
     ).apply(i, MergerNode::new));
 
+    public static final MapCodec<OutputNode> OUTPUT_NODE = RecordCodecBuilder.mapCodec(i -> i.group(
+            UUIDUtil.CODEC.fieldOf("id").forGetter(OutputNode::id),
+            VEC2.fieldOf("position").forGetter(OutputNode::position),
+            ITEM_STACK.fieldOf("item").forGetter(OutputNode::item),
+            Codec.STRING.fieldOf("export_name").forGetter(OutputNode::exportName)
+    ).apply(i, OutputNode::new));
+
     public static final Codec<Node> NODE = Codec.STRING.dispatch(
             "type",
             DesignCodecs::nodeTypeName,
@@ -126,6 +146,7 @@ public final class DesignCodecs {
         if (node instanceof SinkNode) return "sink";
         if (node instanceof SplitterNode) return "splitter";
         if (node instanceof MergerNode) return "merger";
+        if (node instanceof OutputNode) return "output";
         throw new IllegalStateException("Unknown node type: " + node.getClass().getName());
     }
 
@@ -136,7 +157,25 @@ public final class DesignCodecs {
             case "sink"     -> SINK_NODE;
             case "splitter" -> SPLITTER_NODE;
             case "merger"   -> MERGER_NODE;
+            case "output"   -> OUTPUT_NODE;
             default         -> throw new IllegalArgumentException("Unknown node type: " + name);
         };
     }
+
+    // ─── Multi-factory store envelope ──────────────────────────────────────────
+
+    public static final Codec<Factory> FACTORY = RecordCodecBuilder.create(i -> i.group(
+            UUIDUtil.CODEC.fieldOf("id").forGetter(Factory::id),
+            Codec.STRING.fieldOf("name").forGetter(Factory::name),
+            DESIGN.fieldOf("design").forGetter(Factory::design)
+    ).apply(i, Factory::new));
+
+    /** Persisted shape of {@code FactoryStore} — saved to {@code <gameDir>/cogwheel/store.json}. */
+    public record FactoryStoreData(int formatVersion, Optional<UUID> currentFactoryId, List<Factory> factories) {}
+
+    public static final Codec<FactoryStoreData> FACTORY_STORE = RecordCodecBuilder.create(i -> i.group(
+            Codec.INT.optionalFieldOf("format_version", FORMAT_VERSION).forGetter(FactoryStoreData::formatVersion),
+            UUIDUtil.CODEC.optionalFieldOf("current_factory_id").forGetter(FactoryStoreData::currentFactoryId),
+            FACTORY.listOf().fieldOf("factories").forGetter(FactoryStoreData::factories)
+    ).apply(i, FactoryStoreData::new));
 }

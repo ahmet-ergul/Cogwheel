@@ -4,20 +4,32 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
- * A material entry point — manually imported, mob-dropped, or coming from another factory.
+ * A material entry point — manually imported, mob-dropped, coming from another factory, etc.
  * One output port, no inputs.
+ *
+ * <p>{@link Kind#EXTERNAL_FACTORY} sources additionally carry an {@link ExternalRef} pointing at a
+ * specific {@link OutputNode} in another {@link Factory}. The referenced factory's output node
+ * provides the item identity; if the reference doesn't resolve (factory or output deleted), the
+ * source renders as "missing" but still keeps its own {@link #item} as a fallback.
  */
 public record SourceNode(
         UUID id,
         Vec2 position,
         ItemStack item,
-        Kind kind
+        Kind kind,
+        Optional<ExternalRef> externalRef
 ) implements Node {
 
     public enum Kind { MANUAL, EXTERNAL_FACTORY, DROP, INFINITE }
+
+    /** Convenience constructor without external ref (pre-Phase-9f sources). */
+    public SourceNode(UUID id, Vec2 position, ItemStack item, Kind kind) {
+        this(id, position, item, kind, Optional.empty());
+    }
 
     @Override
     public List<Port> inputs() {
@@ -41,10 +53,22 @@ public record SourceNode(
 
     @Override
     public SourceNode withPosition(Vec2 newPosition) {
-        return new SourceNode(id, newPosition, item, kind);
+        return new SourceNode(id, newPosition, item, kind, externalRef);
     }
 
     public SourceNode withKind(Kind newKind) {
-        return new SourceNode(id, position, item, newKind);
+        return new SourceNode(id, position, item, newKind, externalRef);
+    }
+
+    public SourceNode withItem(ItemStack newItem) {
+        return new SourceNode(id, position, newItem, kind, externalRef);
+    }
+
+    public SourceNode withExternalRef(ExternalRef ref) {
+        return new SourceNode(id, position, item, kind, Optional.of(ref));
+    }
+
+    public SourceNode clearExternalRef() {
+        return new SourceNode(id, position, item, kind, Optional.empty());
     }
 }

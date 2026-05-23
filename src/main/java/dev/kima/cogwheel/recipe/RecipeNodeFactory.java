@@ -1,5 +1,6 @@
 package dev.kima.cogwheel.recipe;
 
+import dev.kima.cogwheel.model.OutputNode;
 import dev.kima.cogwheel.model.Port;
 import dev.kima.cogwheel.model.PortType;
 import dev.kima.cogwheel.model.RecipeNode;
@@ -57,5 +58,10 @@ public final class RecipeNodeFactory {
 
     public static SourceNode source(Item item, Vec2 position) {
         return new SourceNode(UUID.randomUUID(), position, new ItemStack(item), SourceNode.Kind.MANUAL);
+    }
+
+    public static OutputNode output(Item item, Vec2 position) {
+        String name = new ItemStack(item).getHoverName().getString();
+        return new OutputNode(UUID.randomUUID(), position, new ItemStack(item), name);
     }
 }

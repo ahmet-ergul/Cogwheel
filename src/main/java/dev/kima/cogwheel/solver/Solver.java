@@ -4,6 +4,7 @@ import dev.kima.cogwheel.model.Design;
 import dev.kima.cogwheel.model.Edge;
 import dev.kima.cogwheel.model.MergerNode;
 import dev.kima.cogwheel.model.Node;
+import dev.kima.cogwheel.model.OutputNode;
 import dev.kima.cogwheel.model.RecipeNode;
 import dev.kima.cogwheel.model.SinkNode;
 import dev.kima.cogwheel.model.SourceNode;
@@ -69,7 +70,9 @@ public final class Solver {
             }
         }
 
-        // Sinks aggregate their incoming rates as "final outputs".
+        // Sinks AND OutputNodes both aggregate their incoming rates as "final outputs". From the
+        // user's perspective both are terminal flows: a Sink is consumed locally; an OutputNode
+        // is exported to other factories. Phase 9g+ polish can split them visually.
         for (Node node : design.nodes()) {
             if (node instanceof SinkNode sn) {
                 for (int i = 0; i < sn.inputs().size(); i++) {
@@ -79,6 +82,14 @@ public final class Solver {
                         if (rate != null && rate > 0) {
                             addItem(finalOutputs, sn.item().getItem(), rate);
                         }
+                    }
+                }
+            } else if (node instanceof OutputNode out) {
+                Edge incoming = findIncomingEdge(design, out.id(), 0);
+                if (incoming != null) {
+                    Double rate = edgeRates.get(incoming);
+                    if (rate != null && rate > 0) {
+                        addItem(finalOutputs, out.item().getItem(), rate);
                     }
                 }
             } else if (node instanceof SourceNode src) {

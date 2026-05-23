@@ -12,8 +12,12 @@
   "screen.cogwheel.category.sources.subtitle": "External raw inputs",
   "screen.cogwheel.category.sinks": "Sinks",
   "screen.cogwheel.category.sinks.subtitle": "Final outputs",
+  "screen.cogwheel.category.outputs": "Outputs",
+  "screen.cogwheel.category.outputs.subtitle": "Export to other factories",
   "screen.cogwheel.category.logic": "Logic",
   "screen.cogwheel.category.logic.subtitle": "Splitters, mergers, filters",
+  "screen.cogwheel.category.factories": "Factories",
+  "screen.cogwheel.category.factories.subtitle": "Switch / create / rename",
 
   "screen.cogwheel.logic.splitter": "Splitter",
   "screen.cogwheel.logic.splitter.subtitle": "1 input → N outputs",
@@ -26,5 +30,8 @@
   "node.cogwheel.source.infinite": "Infinite",
   "node.cogwheel.sink": "Sink",
   "node.cogwheel.splitter": "Splitter",
-  "node.cogwheel.merger": "Merger"
+  "node.cogwheel.merger": "Merger",
+
+  "screen.cogwheel.external_picker.title": "Choose external output",
+  "screen.cogwheel.factories": "Factories"
 }
