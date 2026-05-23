@@ -29,6 +29,7 @@ public final class CogwheelJeiPlugin implements IModPlugin {
 
     @Override
     public void onRuntimeAvailable(IJeiRuntime runtime) {
+        JeiBridge.setRuntime(runtime);
         try {
             List<RecipeEntry> entries = JeiRecipeExtractor.extractAll(runtime);
             JeiBridge.setEntries(entries);
@@ -40,6 +41,7 @@ public final class CogwheelJeiPlugin implements IModPlugin {
 
     @Override
     public void onRuntimeUnavailable() {
+        JeiBridge.setRuntime(null);
         JeiBridge.setEntries(List.of());
     }
 }

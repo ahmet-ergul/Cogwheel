@@ -15,7 +15,9 @@ import net.minecraft.world.item.ItemStack;
  *   <li>Port types must match: ITEM↔ITEM, FLUID↔FLUID — never cross-type.</li>
  *   <li>For ITEM ports, the upstream output's item must match the downstream input's item —
  *       prevents nonsense like "potion → iron nugget".</li>
- *   <li>The exact same edge (same from/fromPort/to/toPort) must not already exist.</li>
+ *   <li><b>1-to-1 cardinality</b>: an output port may have at most one outgoing edge, and an
+ *       input port may have at most one incoming edge. Fan-out / fan-in must go through an
+ *       explicit Splitter or Merger node.</li>
  * </ul>
  *
  * <p>Tag-aware compatibility (an output should also match a tag-backed input if the output is in
@@ -40,13 +42,13 @@ public final class EdgeValidation {
             }
         }
 
-        // Edge equality is by from/fromPort/to/toPort; identical endpoints would be a duplicate.
+        // 1-to-1 cardinality: reject if either endpoint is already engaged.
         for (Edge existing : design.edges()) {
-            if (existing.from().equals(from.node().id())
-                    && existing.fromPort() == from.port().index()
-                    && existing.to().equals(to.node().id())
-                    && existing.toPort() == to.port().index()) {
-                return false;
+            if (existing.from().equals(from.node().id()) && existing.fromPort() == from.port().index()) {
+                return false; // output port already has an outgoing edge
+            }
+            if (existing.to().equals(to.node().id()) && existing.toPort() == to.port().index()) {
+                return false; // input port already has an incoming edge
             }
         }
         return true;

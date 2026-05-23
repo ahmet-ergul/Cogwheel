@@ -5,12 +5,14 @@ import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import dev.kima.cogwheel.model.Design;
 import dev.kima.cogwheel.model.Edge;
+import dev.kima.cogwheel.model.MergerNode;
 import dev.kima.cogwheel.model.Node;
 import dev.kima.cogwheel.model.Port;
 import dev.kima.cogwheel.model.PortType;
 import dev.kima.cogwheel.model.RecipeNode;
 import dev.kima.cogwheel.model.SinkNode;
 import dev.kima.cogwheel.model.SourceNode;
+import dev.kima.cogwheel.model.SplitterNode;
 import dev.kima.cogwheel.model.Vec2;
 import net.minecraft.core.UUIDUtil;
 import net.minecraft.network.chat.Component;
@@ -86,6 +88,18 @@ public final class DesignCodecs {
             ITEM_STACK.fieldOf("item").forGetter(SinkNode::item)
     ).apply(i, SinkNode::new));
 
+    public static final MapCodec<SplitterNode> SPLITTER_NODE = RecordCodecBuilder.mapCodec(i -> i.group(
+            UUIDUtil.CODEC.fieldOf("id").forGetter(SplitterNode::id),
+            VEC2.fieldOf("position").forGetter(SplitterNode::position),
+            Codec.INT.fieldOf("output_count").forGetter(SplitterNode::outputCount)
+    ).apply(i, SplitterNode::new));
+
+    public static final MapCodec<MergerNode> MERGER_NODE = RecordCodecBuilder.mapCodec(i -> i.group(
+            UUIDUtil.CODEC.fieldOf("id").forGetter(MergerNode::id),
+            VEC2.fieldOf("position").forGetter(MergerNode::position),
+            Codec.INT.fieldOf("input_count").forGetter(MergerNode::inputCount)
+    ).apply(i, MergerNode::new));
+
     public static final Codec<Node> NODE = Codec.STRING.dispatch(
             "type",
             DesignCodecs::nodeTypeName,
@@ -110,15 +124,19 @@ public final class DesignCodecs {
         if (node instanceof SourceNode) return "source";
         if (node instanceof RecipeNode) return "recipe";
         if (node instanceof SinkNode) return "sink";
+        if (node instanceof SplitterNode) return "splitter";
+        if (node instanceof MergerNode) return "merger";
         throw new IllegalStateException("Unknown node type: " + node.getClass().getName());
     }
 
     private static MapCodec<? extends Node> codecForNodeType(String name) {
         return switch (name) {
-            case "source" -> SOURCE_NODE;
-            case "recipe" -> RECIPE_NODE;
-            case "sink"   -> SINK_NODE;
-            default       -> throw new IllegalArgumentException("Unknown node type: " + name);
+            case "source"   -> SOURCE_NODE;
+            case "recipe"   -> RECIPE_NODE;
+            case "sink"     -> SINK_NODE;
+            case "splitter" -> SPLITTER_NODE;
+            case "merger"   -> MERGER_NODE;
+            default         -> throw new IllegalArgumentException("Unknown node type: " + name);
         };
     }
 }

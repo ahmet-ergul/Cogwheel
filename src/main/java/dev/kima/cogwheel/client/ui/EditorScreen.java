@@ -14,10 +14,12 @@ import dev.kima.cogwheel.client.ui.panel.SolverOverlay;
 import dev.kima.cogwheel.client.ui.picker.RecipePickerScreen;
 import dev.kima.cogwheel.model.Design;
 import dev.kima.cogwheel.model.Edge;
+import dev.kima.cogwheel.model.MergerNode;
 import dev.kima.cogwheel.model.Node;
 import dev.kima.cogwheel.model.RecipeNode;
 import dev.kima.cogwheel.model.SinkNode;
 import dev.kima.cogwheel.model.SourceNode;
+import dev.kima.cogwheel.model.SplitterNode;
 import dev.kima.cogwheel.model.Vec2;
 import dev.kima.cogwheel.persistence.DesignStore;
 import dev.kima.cogwheel.recipe.RecipeEntry;
@@ -99,7 +101,12 @@ public class EditorScreen extends Screen {
         leftPanel = new LeftPanel(
                 widgetHost,
                 RebuildTrigger.index(),
-                new LeftPanel.Callbacks(this::addRecipeNode, this::addSourceNode, this::addSinkNode),
+                new LeftPanel.Callbacks(
+                        this::addRecipeNode,
+                        this::addSourceNode,
+                        this::addSinkNode,
+                        this::addSplitterNode,
+                        this::addMergerNode),
                 null);
 
         // Layout depends on which panels are visible; recompute now and again per render frame.
@@ -275,6 +282,12 @@ public class EditorScreen extends Screen {
                 canvas.startNodeDrag(node.id(), node.position(), world.x(), world.y());
                 return true;
             }
+            // After nodes, try edges — click an edge to select it (and then delete via Del/Backspace).
+            Optional<Edge> edgeHit = HitTest.edgeAt(design, world.x(), world.y(), EDGE_HIT_RADIUS);
+            if (edgeHit.isPresent()) {
+                canvas.setSelectedEdge(edgeHit.get());
+                return true;
+            }
             // Click on empty canvas clears selection.
             canvas.clearSelection();
             return true;
@@ -412,6 +425,18 @@ public class EditorScreen extends Screen {
         canvas.setSelectedNodeId(node.id());
     }
 
+    private void addSplitterNode() {
+        SplitterNode node = new SplitterNode(UUID.randomUUID(), canvasCenter(), SplitterNode.DEFAULT_OUTPUTS);
+        design = design.withNodeAdded(node);
+        canvas.setSelectedNodeId(node.id());
+    }
+
+    private void addMergerNode() {
+        MergerNode node = new MergerNode(UUID.randomUUID(), canvasCenter(), MergerNode.DEFAULT_INPUTS);
+        design = design.withNodeAdded(node);
+        canvas.setSelectedNodeId(node.id());
+    }
+
     private void replaceSelectedNode(Node updated) {
         if (canvas.selectedNodeId() == null) return;
         design = design.withNodeReplaced(canvas.selectedNodeId(), updated);
@@ -456,8 +481,25 @@ public class EditorScreen extends Screen {
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         // Allow the EditBox / other vanilla widgets to consume keys first (typing in the search box
-        // shouldn't trigger Ctrl+S).
+        // shouldn't trigger Ctrl+S or Delete).
         if (super.keyPressed(keyCode, scanCode, modifiers)) return true;
+
+        // Delete / Backspace removes the selected edge or node.
+        if (keyCode == GLFW.GLFW_KEY_DELETE || keyCode == GLFW.GLFW_KEY_BACKSPACE) {
+            Edge sEdge = canvas.selectedEdge();
+            if (sEdge != null) {
+                design = design.withEdgeRemoved(sEdge);
+                canvas.setSelectedEdge(null);
+                return true;
+            }
+            UUID sNode = canvas.selectedNodeId();
+            if (sNode != null) {
+                design = design.withNodeRemoved(sNode);
+                canvas.clearSelection();
+                return true;
+            }
+            return false;
+        }
 
         boolean ctrl = (modifiers & GLFW.GLFW_MOD_CONTROL) != 0;
         if (ctrl && keyCode == GLFW.GLFW_KEY_S) {

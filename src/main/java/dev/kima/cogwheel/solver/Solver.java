@@ -2,10 +2,12 @@ package dev.kima.cogwheel.solver;
 
 import dev.kima.cogwheel.model.Design;
 import dev.kima.cogwheel.model.Edge;
+import dev.kima.cogwheel.model.MergerNode;
 import dev.kima.cogwheel.model.Node;
 import dev.kima.cogwheel.model.RecipeNode;
 import dev.kima.cogwheel.model.SinkNode;
 import dev.kima.cogwheel.model.SourceNode;
+import dev.kima.cogwheel.model.SplitterNode;
 import dev.kima.cogwheel.recipe.IngredientStack;
 import dev.kima.cogwheel.recipe.RecipeEntry;
 import dev.kima.cogwheel.recipe.RecipeIndex;
@@ -46,11 +48,24 @@ public final class Solver {
         Map<Item, Double> finalOutputs = new LinkedHashMap<>();
         Map<Item, Double> unusedOutputs = new LinkedHashMap<>();
 
-        // For each recipe node, compute its demand on each input port and supply on each output.
-        // Sources don't add anything to the aggregates — they're treated as infinite suppliers.
+        // Pass 1: for each recipe node, compute its demand on each input port and supply on
+        // each output. Sources don't add anything to the aggregates — they're treated as infinite
+        // suppliers.
         for (Node node : topo) {
             if (node instanceof RecipeNode rn) {
                 processRecipeNode(design, index, rn, edgeRates, cyclesPerMin, unmetInputs, unusedOutputs);
+            }
+        }
+
+        // Pass 2: propagate edge demand through Splitter/Merger nodes in REVERSE topo order, so
+        // each logic node sees its downstream demand (already populated by Pass 1) when computing
+        // its own upstream demand. Chained logic nodes work because reverse-topo walks leaves first.
+        for (int i = topo.size() - 1; i >= 0; i--) {
+            Node node = topo.get(i);
+            if (node instanceof SplitterNode splitter) {
+                processSplitter(design, splitter, edgeRates);
+            } else if (node instanceof MergerNode merger) {
+                processMerger(design, merger, edgeRates);
             }
         }
 
@@ -123,6 +138,45 @@ public final class Solver {
             }
             // Outgoing edges' rates are determined by the DOWNSTREAM demand, set when processing
             // that downstream node. We don't write supply to the outgoing edge here.
+        }
+    }
+
+    /**
+     * Splitter aggregates demand from all of its outgoing edges (across all output ports and all
+     * consumers per port) into a single demand on its single input edge.
+     */
+    private static void processSplitter(Design design, SplitterNode splitter, Map<Edge, Double> edgeRates) {
+        double sumOutDemand = 0;
+        for (Edge e : design.edges()) {
+            if (e.from().equals(splitter.id())) {
+                sumOutDemand += edgeRates.getOrDefault(e, 0.0);
+            }
+        }
+        Edge inEdge = findIncomingEdge(design, splitter.id(), 0);
+        if (inEdge != null && sumOutDemand > 0) {
+            edgeRates.put(inEdge, sumOutDemand);
+        }
+    }
+
+    /**
+     * Merger distributes its single output's demand equally across all input ports. (Phase 9e
+     * MVP — Phase 9f+ polish: per-input weights.)
+     */
+    private static void processMerger(Design design, MergerNode merger, Map<Edge, Double> edgeRates) {
+        double sumOutDemand = 0;
+        for (Edge e : design.edges()) {
+            if (e.from().equals(merger.id())) {
+                sumOutDemand += edgeRates.getOrDefault(e, 0.0);
+            }
+        }
+        if (sumOutDemand <= 0) return;
+
+        double perInput = sumOutDemand / merger.inputCount();
+        for (int j = 0; j < merger.inputCount(); j++) {
+            Edge inEdge = findIncomingEdge(design, merger.id(), j);
+            if (inEdge != null) {
+                edgeRates.put(inEdge, perInput);
+            }
         }
     }
 

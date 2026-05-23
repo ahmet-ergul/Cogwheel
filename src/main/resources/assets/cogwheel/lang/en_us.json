@@ -13,11 +13,18 @@
   "screen.cogwheel.category.sinks": "Sinks",
   "screen.cogwheel.category.sinks.subtitle": "Final outputs",
   "screen.cogwheel.category.logic": "Logic",
-  "screen.cogwheel.category.logic.subtitle": "Coming soon",
+  "screen.cogwheel.category.logic.subtitle": "Splitters, mergers, filters",
+
+  "screen.cogwheel.logic.splitter": "Splitter",
+  "screen.cogwheel.logic.splitter.subtitle": "1 input → N outputs",
+  "screen.cogwheel.logic.merger": "Merger",
+  "screen.cogwheel.logic.merger.subtitle": "N inputs → 1 output",
 
   "node.cogwheel.source.manual": "Source",
   "node.cogwheel.source.external_factory": "External Factory",
   "node.cogwheel.source.drop": "Mob Drop",
   "node.cogwheel.source.infinite": "Infinite",
-  "node.cogwheel.sink": "Sink"
+  "node.cogwheel.sink": "Sink",
+  "node.cogwheel.splitter": "Splitter",
+  "node.cogwheel.merger": "Merger"
 }

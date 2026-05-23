@@ -15,14 +15,16 @@ import net.minecraft.client.gui.GuiGraphics;
 public final class EdgeRenderer {
     public static final int SEGMENTS = 24;
     public static final int EDGE_COLOR = 0xFFE8B86E;
+    public static final int EDGE_SELECTED_COLOR = 0xFFFFE9A8;
     public static final int PENDING_EDGE_COLOR = 0x88E8B86E; // faded for the in-progress drag
     public static final float EDGE_WIDTH = 2.0f;
+    public static final float EDGE_SELECTED_WIDTH = 3.5f;
 
     private EdgeRenderer() {}
 
-    public static void renderAll(GuiGraphics graphics, Design design) {
+    public static void renderAll(GuiGraphics graphics, Design design, Canvas canvas) {
         for (Edge edge : design.edges()) {
-            renderOne(graphics, design, edge);
+            renderOne(graphics, design, edge, canvas.isSelectedEdge(edge));
         }
     }
 
@@ -33,7 +35,7 @@ public final class EdgeRenderer {
         drawCurve(graphics, start, end, PENDING_EDGE_COLOR);
     }
 
-    private static void renderOne(GuiGraphics graphics, Design design, Edge edge) {
+    private static void renderOne(GuiGraphics graphics, Design design, Edge edge, boolean selected) {
         Node from = design.findNode(edge.from());
         Node to = design.findNode(edge.to());
         if (from == null || to == null) return;
@@ -41,10 +43,17 @@ public final class EdgeRenderer {
 
         Vec2 start = NodeRenderer.portCenter(from, edge.fromPort(), true);
         Vec2 end = NodeRenderer.portCenter(to, edge.toPort(), false);
-        drawCurve(graphics, start, end, EDGE_COLOR);
+        int color = selected ? EDGE_SELECTED_COLOR : EDGE_COLOR;
+        float width = selected ? EDGE_SELECTED_WIDTH : EDGE_WIDTH;
+        drawCurve(graphics, start, end, color, width);
     }
 
+    /** Used by RenderPending — same signature as before, default width. */
     private static void drawCurve(GuiGraphics graphics, Vec2 start, Vec2 end, int color) {
+        drawCurve(graphics, start, end, color, EDGE_WIDTH);
+    }
+
+    private static void drawCurve(GuiGraphics graphics, Vec2 start, Vec2 end, int color, float width) {
         double dx = end.x() - start.x();
         double bend = Math.max(40, Math.abs(dx) * 0.5);
         Vec2 c1 = new Vec2(start.x() + bend, start.y());
@@ -62,6 +71,6 @@ public final class EdgeRenderer {
             xs[i] = (float) x;
             ys[i] = (float) y;
         }
-        LineRenderer.drawPolyline(graphics, xs, ys, color, EDGE_WIDTH);
+        LineRenderer.drawPolyline(graphics, xs, ys, color, width);
     }
 }

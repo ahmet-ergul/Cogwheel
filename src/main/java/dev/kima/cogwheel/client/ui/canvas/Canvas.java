@@ -1,5 +1,6 @@
 package dev.kima.cogwheel.client.ui.canvas;
 
+import dev.kima.cogwheel.model.Edge;
 import dev.kima.cogwheel.model.Vec2;
 
 import java.util.UUID;
@@ -25,6 +26,7 @@ public final class Canvas {
     private double zoom = 1.0;
 
     private UUID selectedNodeId;
+    private Edge selectedEdge;
     private UUID draggingNodeId;
     /** Offset from a node's top-left corner to the drag-start point, in world space. */
     private double dragOffsetX;
@@ -41,8 +43,26 @@ public final class Canvas {
     public UUID selectedNodeId() { return selectedNodeId; }
     public UUID draggingNodeId() { return draggingNodeId; }
 
-    public void setSelectedNodeId(UUID id) { this.selectedNodeId = id; }
-    public void clearSelection() { this.selectedNodeId = null; }
+    public void setSelectedNodeId(UUID id) {
+        this.selectedNodeId = id;
+        if (id != null) this.selectedEdge = null;
+    }
+
+    public Edge selectedEdge() { return selectedEdge; }
+
+    public void setSelectedEdge(Edge edge) {
+        this.selectedEdge = edge;
+        if (edge != null) this.selectedNodeId = null;
+    }
+
+    public boolean isSelectedEdge(Edge edge) {
+        return selectedEdge != null && selectedEdge.equals(edge);
+    }
+
+    public void clearSelection() {
+        this.selectedNodeId = null;
+        this.selectedEdge = null;
+    }
 
     public boolean isSelected(UUID id) {
         return id != null && id.equals(selectedNodeId);

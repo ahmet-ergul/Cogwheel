@@ -26,16 +26,18 @@ public final class CategoriesPage implements LeftPanelPage {
     private static final int TEXT_DIM = 0xFFA8A8B8;
     private static final int TEXT_DISABLED = 0xFF5A6075;
 
+    private final Component title;
     private final List<Category> categories;
     private int x, y, width, height;
 
-    public CategoriesPage(List<Category> categories) {
+    public CategoriesPage(Component title, List<Category> categories) {
+        this.title = title;
         this.categories = categories;
     }
 
     @Override
     public Component title() {
-        return Component.translatable("screen.cogwheel.left.categories");
+        return title;
     }
 
     @Override public void onShow(WidgetHost host) {}

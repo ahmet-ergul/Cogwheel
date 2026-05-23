@@ -22,6 +22,10 @@ public final class CanvasRenderer {
         // Background panel (always under scissor — drawn before transform).
         graphics.fill(x, y, x + w, y + h, BG_COLOR);
 
+        // Resolve effective port displays once per frame so the Splitter/Merger wildcard ports
+        // visually adopt whatever item is flowing through them.
+        PortDisplayResolver resolver = new PortDisplayResolver(design);
+
         graphics.enableScissor(x, y, x + w, y + h);
 
         PoseStack pose = graphics.pose();
@@ -29,13 +33,9 @@ public final class CanvasRenderer {
         pose.translate(canvas.panX(), canvas.panY(), 0);
         pose.scale((float) canvas.zoom(), (float) canvas.zoom(), 1);
 
-        // Grid in world-space; we pass screen-space viewport so it can compute visible bounds.
-        // GridRenderer needs UNTRANSFORMED world coordinates for the visible-bounds math, but draws
-        // via graphics.fill which IS affected by the current pose. So compute bounds from screen
-        // coords (passed in) and reuse the pose for the fill calls.
         GridRenderer.render(graphics, canvas, x, y, w, h);
 
-        EdgeRenderer.renderAll(graphics, design);
+        EdgeRenderer.renderAll(graphics, design, canvas);
         if (canvas.pendingEdgeFrom() != null) {
             EdgeRenderer.renderPending(graphics, canvas.pendingEdgeFrom(),
                     canvas.pendingEdgeWorldX(), canvas.pendingEdgeWorldY());
@@ -44,7 +44,7 @@ public final class CanvasRenderer {
         graphics.flush();
 
         for (Node node : design.nodes()) {
-            NodeRenderer.render(graphics, node, canvas.isSelected(node.id()));
+            NodeRenderer.render(graphics, node, canvas.isSelected(node.id()), resolver);
         }
 
         pose.popPose();

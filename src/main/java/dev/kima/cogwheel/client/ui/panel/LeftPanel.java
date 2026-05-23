@@ -41,7 +41,9 @@ public final class LeftPanel {
     public record Callbacks(
             Consumer<Item> onAddRecipe,
             Consumer<Item> onAddSource,
-            Consumer<Item> onAddSink
+            Consumer<Item> onAddSink,
+            Runnable onAddSplitter,
+            Runnable onAddMerger
     ) {}
 
     private final LeftPanelPage.WidgetHost widgetHost;
@@ -225,32 +227,53 @@ public final class LeftPanel {
     // ─── Category page construction ────────────────────────────────────────────
 
     private CategoriesPage buildCategoriesPage() {
-        return new CategoriesPage(List.of(
-                new CategoriesPage.Category(
-                        new ItemStack(Items.CRAFTING_TABLE),
-                        Component.translatable("screen.cogwheel.category.recipes"),
-                        Component.translatable("screen.cogwheel.category.recipes.subtitle"),
-                        true,
-                        () -> pushPage(makeRecipesListPage())),
-                new CategoriesPage.Category(
-                        new ItemStack(Items.CHEST),
-                        Component.translatable("screen.cogwheel.category.sources"),
-                        Component.translatable("screen.cogwheel.category.sources.subtitle"),
-                        true,
-                        () -> pushPage(makeSourcesListPage())),
-                new CategoriesPage.Category(
-                        new ItemStack(Items.HOPPER),
-                        Component.translatable("screen.cogwheel.category.sinks"),
-                        Component.translatable("screen.cogwheel.category.sinks.subtitle"),
-                        true,
-                        () -> pushPage(makeSinksListPage())),
-                new CategoriesPage.Category(
-                        new ItemStack(Items.COMPARATOR),
-                        Component.translatable("screen.cogwheel.category.logic"),
-                        Component.translatable("screen.cogwheel.category.logic.subtitle"),
-                        false, // disabled — Phase 9e
-                        () -> {})
-        ));
+        return new CategoriesPage(
+                Component.translatable("screen.cogwheel.left.categories"),
+                List.of(
+                        new CategoriesPage.Category(
+                                new ItemStack(Items.CRAFTING_TABLE),
+                                Component.translatable("screen.cogwheel.category.recipes"),
+                                Component.translatable("screen.cogwheel.category.recipes.subtitle"),
+                                true,
+                                () -> pushPage(makeRecipesListPage())),
+                        new CategoriesPage.Category(
+                                new ItemStack(Items.CHEST),
+                                Component.translatable("screen.cogwheel.category.sources"),
+                                Component.translatable("screen.cogwheel.category.sources.subtitle"),
+                                true,
+                                () -> pushPage(makeSourcesListPage())),
+                        new CategoriesPage.Category(
+                                new ItemStack(Items.BARREL),
+                                Component.translatable("screen.cogwheel.category.sinks"),
+                                Component.translatable("screen.cogwheel.category.sinks.subtitle"),
+                                true,
+                                () -> pushPage(makeSinksListPage())),
+                        new CategoriesPage.Category(
+                                new ItemStack(Items.COMPARATOR),
+                                Component.translatable("screen.cogwheel.category.logic"),
+                                Component.translatable("screen.cogwheel.category.logic.subtitle"),
+                                true,
+                                () -> pushPage(buildLogicPage()))
+                ));
+    }
+
+    private CategoriesPage buildLogicPage() {
+        return new CategoriesPage(
+                Component.translatable("screen.cogwheel.category.logic"),
+                List.of(
+                        new CategoriesPage.Category(
+                                new ItemStack(Items.HOPPER),
+                                Component.translatable("screen.cogwheel.logic.splitter"),
+                                Component.translatable("screen.cogwheel.logic.splitter.subtitle"),
+                                true,
+                                () -> callbacks.onAddSplitter().run()),
+                        new CategoriesPage.Category(
+                                new ItemStack(Items.DROPPER),
+                                Component.translatable("screen.cogwheel.logic.merger"),
+                                Component.translatable("screen.cogwheel.logic.merger.subtitle"),
+                                true,
+                                () -> callbacks.onAddMerger().run())
+                ));
     }
 
     private LeftPanelPage makeRecipesListPage() {

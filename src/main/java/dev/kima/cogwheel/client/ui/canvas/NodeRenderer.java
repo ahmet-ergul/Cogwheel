@@ -7,6 +7,7 @@ import dev.kima.cogwheel.model.Vec2;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.world.item.ItemStack;
 
 /**
  * Renders a single node as a panel with header (icon + title) and rows of input/output ports.
@@ -43,7 +44,7 @@ public final class NodeRenderer {
         return new Vec2(x, y);
     }
 
-    public static void render(GuiGraphics graphics, Node node, boolean selected) {
+    public static void render(GuiGraphics graphics, Node node, boolean selected, PortDisplayResolver resolver) {
         Font font = Minecraft.getInstance().font;
         int x = (int) node.position().x();
         int y = (int) node.position().y();
@@ -66,32 +67,38 @@ public final class NodeRenderer {
         }
         graphics.drawString(font, truncate(font, node.title().getString(), w - 22), x + 22, y + 7, TEXT, false);
 
-        // Input ports (left side).
+        // Input ports (left side). Use the resolver's effective display so wildcard ports
+        // (Splitter/Merger) show whatever's flowing through them.
         for (Port p : node.inputs()) {
-            renderPort(graphics, font, node, p, false);
+            ItemStack effective = resolver != null
+                    ? resolver.inputDisplay(node.id(), p.index())
+                    : p.display();
+            renderPort(graphics, node, p, false, effective);
         }
-        // Output ports (right side).
         for (Port p : node.outputs()) {
-            renderPort(graphics, font, node, p, true);
+            ItemStack effective = resolver != null
+                    ? resolver.outputDisplay(node.id(), p.index())
+                    : p.display();
+            renderPort(graphics, node, p, true, effective);
         }
     }
 
-    private static void renderPort(GuiGraphics graphics, Font font, Node node, Port port, boolean output) {
+    private static void renderPort(GuiGraphics graphics, Node node, Port port, boolean output, ItemStack effectiveDisplay) {
         Vec2 center = portCenter(node, port.index(), output);
         int cx = (int) center.x();
         int cy = (int) center.y();
         int color = port.type() == PortType.FLUID ? PORT_FLUID : PORT_ITEM;
 
-        // Filled square approximates a dot — cheaper than a circle and crisp at any zoom.
+        // Filled square approximates a dot.
         int r = PORT_DOT_RADIUS;
         graphics.fill(cx - r, cy - r, cx + r, cy + r, color);
 
-        // Item icon next to the dot, inside the node body. The icon IS the label — full label
-        // text removed because the input port [N] and output port [N] are on the same row and
-        // their labels collide horizontally with anything but trivially-short names.
+        // Item icon next to the dot, inside the node body. effectiveDisplay falls back to
+        // Port.display() if the resolver couldn't infer anything (e.g. unconnected wildcard).
         int iconX = output ? cx - 22 : cx + 6;
-        if (!port.display().isEmpty()) {
-            graphics.renderItem(port.display(), iconX, cy - 8);
+        ItemStack toRender = effectiveDisplay.isEmpty() ? port.display() : effectiveDisplay;
+        if (!toRender.isEmpty()) {
+            graphics.renderItem(toRender, iconX, cy - 8);
         }
     }
 

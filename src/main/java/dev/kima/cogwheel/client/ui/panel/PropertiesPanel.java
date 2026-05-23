@@ -1,14 +1,15 @@
 package dev.kima.cogwheel.client.ui.panel;
 
+import dev.kima.cogwheel.model.MergerNode;
 import dev.kima.cogwheel.model.Node;
 import dev.kima.cogwheel.model.Port;
 import dev.kima.cogwheel.model.RecipeNode;
 import dev.kima.cogwheel.model.SinkNode;
 import dev.kima.cogwheel.model.SourceNode;
+import dev.kima.cogwheel.model.SplitterNode;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.world.item.ItemStack;
 
 import java.util.function.Consumer;
 
@@ -19,6 +20,8 @@ import java.util.function.Consumer;
  *   <li>{@link SourceNode}: a Kind cycle button (MANUAL / EXTERNAL_FACTORY / DROP / INFINITE).</li>
  *   <li>{@link RecipeNode}: parallelism slider (1–256, linear), swap-recipe button, inputs/outputs.</li>
  *   <li>{@link SinkNode}: just the item; nothing to configure yet.</li>
+ *   <li>{@link SplitterNode}: output-count slider (2–8).</li>
+ *   <li>{@link MergerNode}: input-count slider (2–8).</li>
  * </ul>
  *
  * <p>Renders manually (no vanilla widgets) so we don't have to wrestle the screen widget lifecycle
@@ -115,6 +118,14 @@ public final class PropertiesPanel {
             renderRecipe(graphics, font, rn, contentY, mouseX, mouseY);
         } else if (selected instanceof SinkNode sn) {
             renderSink(graphics, font, sn, contentY);
+        } else if (selected instanceof SplitterNode splitter) {
+            renderCountSlider(graphics, font, contentY,
+                    "Outputs: " + splitter.outputCount(),
+                    splitter.outputCount(), SplitterNode.MIN_OUTPUTS, SplitterNode.MAX_OUTPUTS);
+        } else if (selected instanceof MergerNode merger) {
+            renderCountSlider(graphics, font, contentY,
+                    "Inputs: " + merger.inputCount(),
+                    merger.inputCount(), MergerNode.MIN_INPUTS, MergerNode.MAX_INPUTS);
         }
     }
 
@@ -132,18 +143,16 @@ public final class PropertiesPanel {
     }
 
     private void renderRecipe(GuiGraphics graphics, Font font, RecipeNode rn, int y, int mouseX, int mouseY) {
-        // Parallelism label + slider.
         graphics.drawString(font, "Parallelism: " + rn.parallelism(),
                 panelX + PADDING, y, TEXT, false);
         int sliderY = y + ROW_HEIGHT;
-        renderSlider(graphics, panelX + PADDING, sliderY, WIDTH - PADDING * 2, rn.parallelism());
+        renderSlider(graphics, panelX + PADDING, sliderY, WIDTH - PADDING * 2,
+                rn.parallelism(), PARALLELISM_MIN, PARALLELISM_MAX);
 
-        // Swap-recipe button.
         int btnY = sliderY + SLIDER_HEIGHT + PADDING * 2;
         drawButton(graphics, panelX + PADDING, btnY, WIDTH - PADDING * 2, BUTTON_HEIGHT,
                 "Swap recipe…", mouseX, mouseY);
 
-        // Inputs.
         int inY = btnY + BUTTON_HEIGHT + PADDING * 2;
         graphics.drawString(font, "Inputs", panelX + PADDING, inY, TEXT_DIM, false);
         int rowY = inY + ROW_HEIGHT;
@@ -152,7 +161,6 @@ public final class PropertiesPanel {
             rowY += ROW_HEIGHT + 2;
         }
 
-        // Outputs.
         rowY += PADDING;
         graphics.drawString(font, "Outputs", panelX + PADDING, rowY, TEXT_DIM, false);
         rowY += ROW_HEIGHT;
@@ -169,6 +177,15 @@ public final class PropertiesPanel {
                 panelX + PADDING + 20, y + ROW_HEIGHT + 4, TEXT, false);
     }
 
+    /** Shared rendering for Splitter outputCount and Merger inputCount sliders. */
+    private void renderCountSlider(GuiGraphics graphics, Font font, int y, String label, int value, int min, int max) {
+        graphics.drawString(font, label, panelX + PADDING, y, TEXT, false);
+        int sliderY = y + ROW_HEIGHT;
+        renderSlider(graphics, panelX + PADDING, sliderY, WIDTH - PADDING * 2, value, min, max);
+        graphics.drawString(font, "Range: " + min + "–" + max,
+                panelX + PADDING, sliderY + SLIDER_HEIGHT + PADDING, TEXT_DIM, false);
+    }
+
     private void renderPortRow(GuiGraphics graphics, Font font, Port port, int y) {
         if (!port.display().isEmpty()) {
             graphics.renderItem(port.display(), panelX + PADDING, y);
@@ -177,9 +194,9 @@ public final class PropertiesPanel {
                 panelX + PADDING + 20, y + 4, TEXT, false);
     }
 
-    private void renderSlider(GuiGraphics graphics, int x, int y, int w, int value) {
+    private void renderSlider(GuiGraphics graphics, int x, int y, int w, int value, int min, int max) {
         graphics.fill(x, y, x + w, y + SLIDER_HEIGHT, SLIDER_TRACK);
-        double frac = (double) (value - PARALLELISM_MIN) / (PARALLELISM_MAX - PARALLELISM_MIN);
+        double frac = max == min ? 0 : (double) (value - min) / (max - min);
         int fillW = (int) Math.round(w * frac);
         graphics.fill(x, y, x + fillW, y + SLIDER_HEIGHT, SLIDER_FILL);
     }
@@ -195,7 +212,7 @@ public final class PropertiesPanel {
 
     public boolean mouseClicked(double sx, double sy, int button) {
         if (!contains(sx, sy) || selected == null) return false;
-        if (button != 0) return true; // consume but ignore non-left clicks
+        if (button != 0) return true;
 
         // Close button.
         int closeX = panelX + WIDTH - CLOSE_SIZE - PADDING;
@@ -218,7 +235,7 @@ public final class PropertiesPanel {
             int sliderY = contentY + ROW_HEIGHT;
             if (hits(sx, sy, panelX + PADDING, sliderY, WIDTH - PADDING * 2, SLIDER_HEIGHT)) {
                 draggingSlider = true;
-                applySliderDrag(sx, rn);
+                applySliderDrag(sx);
                 return true;
             }
             int btnY = sliderY + SLIDER_HEIGHT + PADDING * 2;
@@ -226,17 +243,21 @@ public final class PropertiesPanel {
                 onSwapRecipe.run();
                 return true;
             }
+        } else if (selected instanceof SplitterNode || selected instanceof MergerNode) {
+            int sliderY = contentY + ROW_HEIGHT;
+            if (hits(sx, sy, panelX + PADDING, sliderY, WIDTH - PADDING * 2, SLIDER_HEIGHT)) {
+                draggingSlider = true;
+                applySliderDrag(sx);
+                return true;
+            }
         }
-        return true; // consume clicks inside the panel even when no widget hit
+        return true;
     }
 
     public boolean mouseDragged(double sx, double sy, int button, double dragX, double dragY) {
         if (!draggingSlider) return false;
-        if (selected instanceof RecipeNode rn) {
-            applySliderDrag(sx, rn);
-            return true;
-        }
-        return false;
+        applySliderDrag(sx);
+        return true;
     }
 
     public boolean mouseReleased(double sx, double sy, int button) {
@@ -247,13 +268,29 @@ public final class PropertiesPanel {
         return false;
     }
 
-    private void applySliderDrag(double sx, RecipeNode rn) {
+    private void applySliderDrag(double sx) {
+        if (selected == null) return;
         int x = panelX + PADDING;
         int w = WIDTH - PADDING * 2;
         double frac = Math.max(0, Math.min(1, (sx - x) / w));
-        int newValue = (int) Math.round(PARALLELISM_MIN + frac * (PARALLELISM_MAX - PARALLELISM_MIN));
-        if (newValue != rn.parallelism()) {
-            onNodeUpdated.accept(rn.withParallelism(newValue));
+
+        if (selected instanceof RecipeNode rn) {
+            int newValue = (int) Math.round(PARALLELISM_MIN + frac * (PARALLELISM_MAX - PARALLELISM_MIN));
+            if (newValue != rn.parallelism()) {
+                onNodeUpdated.accept(rn.withParallelism(newValue));
+            }
+        } else if (selected instanceof SplitterNode splitter) {
+            int newValue = (int) Math.round(SplitterNode.MIN_OUTPUTS
+                    + frac * (SplitterNode.MAX_OUTPUTS - SplitterNode.MIN_OUTPUTS));
+            if (newValue != splitter.outputCount()) {
+                onNodeUpdated.accept(splitter.withOutputCount(newValue));
+            }
+        } else if (selected instanceof MergerNode merger) {
+            int newValue = (int) Math.round(MergerNode.MIN_INPUTS
+                    + frac * (MergerNode.MAX_INPUTS - MergerNode.MIN_INPUTS));
+            if (newValue != merger.inputCount()) {
+                onNodeUpdated.accept(merger.withInputCount(newValue));
+            }
         }
     }
 
