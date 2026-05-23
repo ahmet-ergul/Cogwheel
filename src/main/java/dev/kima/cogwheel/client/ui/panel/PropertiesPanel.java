@@ -4,6 +4,8 @@ import dev.kima.cogwheel.client.ui.modal.TextInputModal;
 import dev.kima.cogwheel.client.ui.picker.ExternalOutputPickerScreen;
 import dev.kima.cogwheel.model.Factory;
 import dev.kima.cogwheel.model.FactoryStore;
+import dev.kima.cogwheel.model.FilterNode;
+import dev.kima.cogwheel.model.LimiterNode;
 import dev.kima.cogwheel.model.MergerNode;
 import dev.kima.cogwheel.model.Node;
 import dev.kima.cogwheel.model.OutputNode;
@@ -12,13 +14,20 @@ import dev.kima.cogwheel.model.RecipeNode;
 import dev.kima.cogwheel.model.SinkNode;
 import dev.kima.cogwheel.model.SourceNode;
 import dev.kima.cogwheel.model.SplitterNode;
+import dev.kima.cogwheel.recipe.IngredientStack;
+import dev.kima.cogwheel.recipe.RecipeEntry;
+import dev.kima.cogwheel.recipe.RecipeIndex;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * Right sidebar showing properties for the currently selected node.
@@ -36,13 +45,13 @@ import java.util.function.Consumer;
  * {@link #mouseDragged} / {@link #mouseReleased}.
  */
 public final class PropertiesPanel {
-    public static final int WIDTH = 180;
-    private static final int PADDING = 6;
-    private static final int HEADER_HEIGHT = 22;
-    private static final int ROW_HEIGHT = 14;
-    private static final int SLIDER_HEIGHT = 10;
-    private static final int BUTTON_HEIGHT = 16;
-    private static final int CLOSE_SIZE = 12;
+    public static final int WIDTH = 152;
+    private static final int PADDING = 5;
+    private static final int HEADER_HEIGHT = 18;
+    private static final int ROW_HEIGHT = 12;
+    private static final int SLIDER_HEIGHT = 8;
+    private static final int BUTTON_HEIGHT = 14;
+    private static final int CLOSE_SIZE = 10;
 
     private static final int BG_COLOR = 0xFF131726;
     private static final int BORDER = 0xFF2A3148;
@@ -60,6 +69,7 @@ public final class PropertiesPanel {
     private final Consumer<Node> onNodeUpdated;
     private final Runnable onSwapRecipe;
     private final Runnable onClose;
+    private final Supplier<RecipeIndex> indexSupplier;
 
     private Node selected;
     private int panelX;
@@ -67,10 +77,12 @@ public final class PropertiesPanel {
     private int panelH;
     private boolean draggingSlider;
 
-    public PropertiesPanel(Consumer<Node> onNodeUpdated, Runnable onSwapRecipe, Runnable onClose) {
+    public PropertiesPanel(Consumer<Node> onNodeUpdated, Runnable onSwapRecipe, Runnable onClose,
+                            Supplier<RecipeIndex> indexSupplier) {
         this.onNodeUpdated = onNodeUpdated;
         this.onSwapRecipe = onSwapRecipe;
         this.onClose = onClose;
+        this.indexSupplier = indexSupplier;
     }
 
     public void setSelected(Node node) {
@@ -131,11 +143,65 @@ public final class PropertiesPanel {
             renderCountSlider(graphics, font, contentY,
                     "Outputs: " + splitter.outputCount(),
                     splitter.outputCount(), SplitterNode.MIN_OUTPUTS, SplitterNode.MAX_OUTPUTS);
+            int modeRowY = contentY + ROW_HEIGHT + SLIDER_HEIGHT + ROW_HEIGHT + PADDING * 2;
+            graphics.drawString(font, "Mode", panelX + PADDING, modeRowY, TEXT_DIM, false);
+            int modeBtnY = modeRowY + ROW_HEIGHT;
+            drawButton(graphics, panelX + PADDING, modeBtnY, WIDTH - PADDING * 2, BUTTON_HEIGHT,
+                    splitter.mode().name(), mouseX, mouseY);
         } else if (selected instanceof MergerNode merger) {
             renderCountSlider(graphics, font, contentY,
                     "Inputs: " + merger.inputCount(),
                     merger.inputCount(), MergerNode.MIN_INPUTS, MergerNode.MAX_INPUTS);
+        } else if (selected instanceof LimiterNode limiter) {
+            renderLimiter(graphics, font, limiter, contentY);
+        } else if (selected instanceof FilterNode filter) {
+            renderFilter(graphics, font, filter, contentY);
         }
+    }
+
+    private void renderLimiter(GuiGraphics graphics, Font font, LimiterNode limiter, int y) {
+        String label = "Limit: " + formatRate(limiter.limitPerMin()) + "/min";
+        graphics.drawString(font, label, panelX + PADDING, y, TEXT, false);
+        int sliderY = y + ROW_HEIGHT;
+        renderLogSlider(graphics, panelX + PADDING, sliderY, WIDTH - PADDING * 2,
+                limiter.limitPerMin(), LimiterNode.MIN_LIMIT, LimiterNode.MAX_LIMIT);
+        graphics.drawString(font, "Range: " + (int) LimiterNode.MIN_LIMIT + "–" + (int) LimiterNode.MAX_LIMIT,
+                panelX + PADDING, sliderY + SLIDER_HEIGHT + PADDING, TEXT_DIM, false);
+        graphics.drawString(font, "Excess is voided.",
+                panelX + PADDING, sliderY + SLIDER_HEIGHT + PADDING + ROW_HEIGHT, TEXT_DIM, false);
+    }
+
+    private void renderFilter(GuiGraphics graphics, Font font, FilterNode filter, int y) {
+        graphics.drawString(font, "Matches", panelX + PADDING, y, TEXT_DIM, false);
+        int itemY = y + ROW_HEIGHT;
+        if (!filter.matchItem().isEmpty()) {
+            graphics.renderItem(filter.matchItem(), panelX + PADDING, itemY);
+            graphics.drawString(font, filter.matchItem().getHoverName().getString(),
+                    panelX + PADDING + 20, itemY + 4, TEXT, false);
+        } else {
+            graphics.drawString(font, "(none — set via right-click on canvas)",
+                    panelX + PADDING, itemY + 4, TEXT_DIM, false);
+        }
+        int hintY = itemY + ROW_HEIGHT * 2;
+        graphics.drawString(font, "Out 0: match → carries this item",
+                panelX + PADDING, hintY, TEXT_DIM, false);
+        graphics.drawString(font, "Out 1: reject → everything else",
+                panelX + PADDING, hintY + ROW_HEIGHT, TEXT_DIM, false);
+    }
+
+    private String formatRate(double v) {
+        if (v >= 1000) return String.format("%.1fk", v / 1000);
+        if (v >= 100) return String.format("%.0f", v);
+        return String.format("%.1f", v);
+    }
+
+    /** Log-scale slider for the limiter (we want fine control near 1/min, coarse near 10k/min). */
+    private void renderLogSlider(GuiGraphics graphics, int x, int y, int w, double value, double min, double max) {
+        graphics.fill(x, y, x + w, y + SLIDER_HEIGHT, SLIDER_TRACK);
+        double frac = Math.log(value / min) / Math.log(max / min);
+        frac = Math.max(0, Math.min(1, frac));
+        int fillW = (int) Math.round(w * frac);
+        graphics.fill(x, y, x + fillW, y + SLIDER_HEIGHT, SLIDER_FILL);
     }
 
     private void renderSource(GuiGraphics graphics, Font font, SourceNode src, int y, int mouseX, int mouseY) {
@@ -202,8 +268,12 @@ public final class PropertiesPanel {
         int inY = btnY + BUTTON_HEIGHT + PADDING * 2;
         graphics.drawString(font, "Inputs", panelX + PADDING, inY, TEXT_DIM, false);
         int rowY = inY + ROW_HEIGHT;
+        List<IngredientStack> origInputs = lookupOriginalInputs(rn);
         for (Port p : rn.inputs()) {
-            renderPortRow(graphics, font, p, rowY);
+            List<Item> alternates = p.index() < origInputs.size()
+                    ? origInputs.get(p.index()).matchingItems()
+                    : List.of();
+            renderInputRow(graphics, font, p, rowY, alternates, mouseX, mouseY);
             rowY += ROW_HEIGHT + 2;
         }
 
@@ -213,6 +283,34 @@ public final class PropertiesPanel {
         for (Port p : rn.outputs()) {
             renderPortRow(graphics, font, p, rowY);
             rowY += ROW_HEIGHT + 2;
+        }
+    }
+
+    /** Look up the recipe's original ingredient list (with full matchingItems) so the variant
+     *  picker knows which alternates are available. Empty list if the recipe isn't in the index. */
+    private List<IngredientStack> lookupOriginalInputs(RecipeNode rn) {
+        if (indexSupplier == null) return List.of();
+        RecipeIndex idx = indexSupplier.get();
+        if (idx == null) return List.of();
+        RecipeEntry e = idx.byId(rn.recipeId());
+        return e != null ? e.inputs() : List.of();
+    }
+
+    private void renderInputRow(GuiGraphics graphics, Font font, Port port, int y,
+                                List<Item> alternates, int mouseX, int mouseY) {
+        boolean hasCycle = alternates.size() > 1;
+        int cycleW = hasCycle ? 12 : 0;
+        if (!port.display().isEmpty()) {
+            graphics.renderItem(port.display(), panelX + PADDING, y);
+        }
+        int labelMax = WIDTH - 22 - PADDING * 2 - cycleW;
+        graphics.drawString(font, truncate(font, port.label(), labelMax),
+                panelX + PADDING + 20, y + 4, TEXT, false);
+        if (hasCycle) {
+            int bx = panelX + WIDTH - PADDING - cycleW;
+            boolean hover = mouseX >= bx && mouseX < bx + cycleW && mouseY >= y && mouseY < y + ROW_HEIGHT;
+            if (hover) graphics.fill(bx, y, bx + cycleW, y + ROW_HEIGHT, BUTTON_HOVER_BG);
+            graphics.drawString(font, "›", bx + 4, y + 4, TEXT, false);
         }
     }
 
@@ -318,7 +416,38 @@ public final class PropertiesPanel {
                 onSwapRecipe.run();
                 return true;
             }
-        } else if (selected instanceof SplitterNode || selected instanceof MergerNode) {
+            // Variant cycle buttons on input rows.
+            int inY = btnY + BUTTON_HEIGHT + PADDING * 2;
+            int rowY = inY + ROW_HEIGHT;
+            List<IngredientStack> origInputs = lookupOriginalInputs(rn);
+            int cycleX = panelX + WIDTH - PADDING - 12;
+            for (Port p : rn.inputs()) {
+                List<Item> alts = p.index() < origInputs.size() ? origInputs.get(p.index()).matchingItems() : List.of();
+                if (alts.size() > 1 && hits(sx, sy, cycleX, rowY, 12, ROW_HEIGHT)) {
+                    Item current = p.display().isEmpty() ? alts.get(0) : p.display().getItem();
+                    int idx = alts.indexOf(current);
+                    int next = (idx < 0 ? 1 : (idx + 1) % alts.size());
+                    onNodeUpdated.accept(rn.withInputDisplay(p.index(), new ItemStack(alts.get(next))));
+                    return true;
+                }
+                rowY += ROW_HEIGHT + 2;
+            }
+        } else if (selected instanceof SplitterNode splitter) {
+            int sliderY = contentY + ROW_HEIGHT;
+            if (hits(sx, sy, panelX + PADDING, sliderY, WIDTH - PADDING * 2, SLIDER_HEIGHT)) {
+                draggingSlider = true;
+                applySliderDrag(sx);
+                return true;
+            }
+            int modeRowY = contentY + ROW_HEIGHT + SLIDER_HEIGHT + ROW_HEIGHT + PADDING * 2;
+            int modeBtnY = modeRowY + ROW_HEIGHT;
+            if (hits(sx, sy, panelX + PADDING, modeBtnY, WIDTH - PADDING * 2, BUTTON_HEIGHT)) {
+                SplitterNode.Mode[] modes = SplitterNode.Mode.values();
+                int next = (splitter.mode().ordinal() + 1) % modes.length;
+                onNodeUpdated.accept(splitter.withMode(modes[next]));
+                return true;
+            }
+        } else if (selected instanceof MergerNode || selected instanceof LimiterNode) {
             int sliderY = contentY + ROW_HEIGHT;
             if (hits(sx, sy, panelX + PADDING, sliderY, WIDTH - PADDING * 2, SLIDER_HEIGHT)) {
                 draggingSlider = true;
@@ -365,6 +494,12 @@ public final class PropertiesPanel {
                     + frac * (MergerNode.MAX_INPUTS - MergerNode.MIN_INPUTS));
             if (newValue != merger.inputCount()) {
                 onNodeUpdated.accept(merger.withInputCount(newValue));
+            }
+        } else if (selected instanceof LimiterNode limiter) {
+            // Log scale: value = min * (max/min)^frac
+            double v = LimiterNode.MIN_LIMIT * Math.pow(LimiterNode.MAX_LIMIT / LimiterNode.MIN_LIMIT, frac);
+            if (Math.abs(v - limiter.limitPerMin()) > 0.01) {
+                onNodeUpdated.accept(limiter.withLimit(v));
             }
         }
     }

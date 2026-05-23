@@ -17,8 +17,8 @@ import java.util.Map;
  * item-icon + rate.
  */
 public final class SolverOverlay {
-    public static final int HEIGHT = 28;
-    private static final int PADDING = 6;
+    public static final int HEIGHT = 24;
+    private static final int PADDING = 5;
     private static final int BG = 0xEE131726;
     private static final int BORDER = 0xFF2A3148;
     private static final int LABEL = 0xFFA8A8B8;
@@ -72,15 +72,25 @@ public final class SolverOverlay {
                 break;
             }
             ItemStack stack = new ItemStack(entry.getKey());
-            graphics.renderItem(stack, cursorX, rowY);
+            renderScaledItem(graphics, stack, cursorX, rowY, 0.75f);
             String num = formatRate(entry.getValue());
             int numW = font.width(num);
-            if (cursorX + 18 + numW > x + w) break;
-            graphics.drawString(font, num, cursorX + 18, rowY + 4, TEXT, false);
-            cursorX += 18 + numW + 8;
+            int iconCellW = 14;
+            if (cursorX + iconCellW + numW > x + w) break;
+            graphics.drawString(font, num, cursorX + iconCellW, rowY + 4, TEXT, false);
+            cursorX += iconCellW + numW + 6;
             shown++;
             if (cursorX > x + w) break;
         }
+    }
+
+    private static void renderScaledItem(GuiGraphics graphics, ItemStack stack, int x, int y, float scale) {
+        var pose = graphics.pose();
+        pose.pushPose();
+        pose.translate(x, y, 0);
+        pose.scale(scale, scale, 1f);
+        graphics.renderItem(stack, 0, 0);
+        pose.popPose();
     }
 
     private static String formatRate(double itemsPerMin) {

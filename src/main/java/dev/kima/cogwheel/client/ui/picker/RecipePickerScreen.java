@@ -25,8 +25,10 @@ import java.util.function.Consumer;
  */
 public final class RecipePickerScreen extends Screen {
     private static final int PANEL_WIDTH = 460;
-    /** Tall enough to fit JEI's typical category drawables (crafting ~54, smelting ~34, brewing ~60). */
-    private static final int ROW_HEIGHT = 56;
+    /** Tall enough to render JEI's typical category drawables at scale ≈ 1.0 (crafting ~54,
+     *  smelting ~34, brewing ~60, Create ~70). Smaller rows force {@code JeiPickerRenderer} to
+     *  shrink, which makes the built-in ingredient cycling unreadable. */
+    private static final int ROW_HEIGHT = 80;
     private static final int HEADER_HEIGHT = 26;
     private static final int PADDING = 6;
     private static final int TAIL_WIDTH = 96;
@@ -97,10 +99,14 @@ public final class RecipePickerScreen extends Screen {
         graphics.fill(panelX + PANEL_WIDTH, panelY, panelX + PANEL_WIDTH + 1, panelY + panelH, BORDER);
 
         graphics.drawString(font, this.title, panelX + PADDING, panelY + PADDING + 2, TEXT, false);
-        String count = entries.size() + " recipes";
-        graphics.drawString(font, Component.literal(count),
-                panelX + PANEL_WIDTH - PADDING - font.width(count),
-                panelY + PADDING + 2, TEXT_DIM, false);
+        String count = Component.translatable("screen.cogwheel.recipe_picker.count", entries.size()).getString();
+        String hint = Component.translatable("screen.cogwheel.recipe_picker.jei_hint").getString();
+        int rightX = panelX + PANEL_WIDTH - PADDING;
+        graphics.drawString(font, count, rightX - font.width(count), panelY + PADDING + 2, TEXT_DIM, false);
+        if (JeiBridge.getRuntime() != null) {
+            int hintX = rightX - font.width(count) - 8 - font.width(hint);
+            graphics.drawString(font, hint, hintX, panelY + PADDING + 2, TEXT_DIM, false);
+        }
         // Header separator.
         graphics.fill(panelX + 1, panelY + HEADER_HEIGHT - 1, panelX + PANEL_WIDTH - 1, panelY + HEADER_HEIGHT, BORDER);
 
@@ -171,9 +177,7 @@ public final class RecipePickerScreen extends Screen {
             ItemStack stack = new ItemStack(input.matchingItems().get(0));
             graphics.renderItem(stack, cursor, iconY);
             if (input.count() > 1) {
-                String countStr = "×" + input.count();
-                int cw = font.width(countStr);
-                graphics.drawString(font, countStr, cursor + 16 - cw, iconY + 8, 0xFFFFFFFF, true);
+                graphics.renderItemDecorations(font, stack, cursor, iconY, "×" + input.count());
             }
             cursor += 18;
             inputsShown++;
@@ -190,9 +194,7 @@ public final class RecipePickerScreen extends Screen {
             if (out.isEmpty()) continue;
             graphics.renderItem(out, cursor, iconY);
             if (out.getCount() > 1) {
-                String countStr = "×" + out.getCount();
-                int cw = font.width(countStr);
-                graphics.drawString(font, countStr, cursor + 16 - cw, iconY + 8, 0xFFFFFFFF, true);
+                graphics.renderItemDecorations(font, out, cursor, iconY, "×" + out.getCount());
             }
             cursor += 18;
             outputsShown++;
@@ -215,22 +217,30 @@ public final class RecipePickerScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (button != 0) return super.mouseClicked(mouseX, mouseY, button);
-
         int listY = panelY + HEADER_HEIGHT;
         int listH = panelH - HEADER_HEIGHT - PADDING;
-        if (mouseX >= panelX && mouseX <= panelX + PANEL_WIDTH && mouseY >= listY && mouseY < listY + listH) {
+        boolean insideList = mouseX >= panelX && mouseX <= panelX + PANEL_WIDTH
+                && mouseY >= listY && mouseY < listY + listH;
+        if (insideList) {
             int relY = (int) (mouseY - listY + scroll);
             int index = relY / ROW_HEIGHT;
             if (index >= 0 && index < entries.size()) {
-                RecipeEntry chosen = entries.get(index);
-                Minecraft.getInstance().setScreen(parent);
-                onSelect.accept(chosen);
-                return true;
+                RecipeEntry hit = entries.get(index);
+                if (button == 1) {
+                    // Right-click: open JEI's full recipe page; keep the picker open underneath.
+                    JeiBridge.showRecipeInJei(hit.typeId(), hit.id());
+                    return true;
+                }
+                if (button == 0) {
+                    Minecraft.getInstance().setScreen(parent);
+                    onSelect.accept(hit);
+                    return true;
+                }
             }
         }
-        // Click outside panel cancels — return to editor without selection.
-        if (mouseX < panelX || mouseX > panelX + PANEL_WIDTH || mouseY < panelY || mouseY > panelY + panelH) {
+        // Left-click outside panel cancels — return to editor without selection.
+        if (button == 0 && (mouseX < panelX || mouseX > panelX + PANEL_WIDTH
+                || mouseY < panelY || mouseY > panelY + panelH)) {
             Minecraft.getInstance().setScreen(parent);
             return true;
         }

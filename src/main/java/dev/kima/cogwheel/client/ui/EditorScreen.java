@@ -12,10 +12,13 @@ import dev.kima.cogwheel.client.ui.panel.LeftPanelPage;
 import dev.kima.cogwheel.client.ui.panel.PropertiesPanel;
 import dev.kima.cogwheel.client.ui.panel.SolverOverlay;
 import dev.kima.cogwheel.client.ui.picker.RecipePickerScreen;
+import dev.kima.cogwheel.integration.jei.JeiBridge;
 import dev.kima.cogwheel.model.Design;
 import dev.kima.cogwheel.model.Edge;
 import dev.kima.cogwheel.model.Factory;
 import dev.kima.cogwheel.model.FactoryStore;
+import dev.kima.cogwheel.model.FilterNode;
+import dev.kima.cogwheel.model.LimiterNode;
 import dev.kima.cogwheel.model.MergerNode;
 import dev.kima.cogwheel.model.Node;
 import dev.kima.cogwheel.model.OutputNode;
@@ -66,16 +69,22 @@ public class EditorScreen extends Screen {
     private final ContextMenu contextMenu = new ContextMenu();
     private LeftPanel leftPanel;
     private final PropertiesPanel properties = new PropertiesPanel(
-            this::replaceSelectedNode,
+            this::replaceEditingNode,
             this::onSwapRecipeRequested,
-            () -> propertiesPanelClosed = true);
+            () -> editingNodeId = null,
+            RebuildTrigger::index);
     private Design design;
     private boolean panning = false;
     private int canvasX, canvasY, canvasW, canvasH;
 
-    /** Reset to false whenever the selection changes, so a fresh selection always shows its properties. */
-    private boolean propertiesPanelClosed = false;
-    private UUID lastSelectionForPanel = null;
+    /** Selection is a passive highlight (single click). Editing is the active focus that opens the
+     *  properties panel (double-click or context-menu "Edit"). They're independent so clicking around
+     *  the canvas doesn't keep popping the right sidebar open. */
+    private UUID editingNodeId = null;
+    /** Last left-click on a node — used to detect double-click within {@link #DOUBLE_CLICK_MS}. */
+    private UUID lastClickedNodeId = null;
+    private long lastClickedAt = 0;
+    private static final long DOUBLE_CLICK_MS = 350;
 
     /** Transient banner. Shown for {@link #BANNER_LIFETIME_MS} after each save / load. */
     private String banner;
@@ -97,7 +106,7 @@ public class EditorScreen extends Screen {
         // Load factory store from disk on the first open in this game session. Subsequent opens
         // reuse the singleton's in-memory state so unsaved edits don't get clobbered.
         if (!storeLoaded) {
-            FactoryFileStore.load();
+            FactoryFileStore.loadAll();
             storeLoaded = true;
         }
         if (FactoryStore.get().current() == null) {
@@ -116,29 +125,45 @@ public class EditorScreen extends Screen {
                 EditorScreen.this.removeWidget(widget);
             }
         };
-        leftPanel = new LeftPanel(
-                widgetHost,
-                RebuildTrigger.index(),
-                new LeftPanel.Callbacks(
-                        this::addRecipeNode,
-                        this::addSourceNode,
-                        this::addSinkNode,
-                        this::addSplitterNode,
-                        this::addMergerNode,
-                        this::addOutputNode,
-                        this::switchFactory,
-                        this::createFactory,
-                        this::deleteFactory,
-                        this::renameFactory),
-                null);
+        // Preserve panel state across screen re-inits (e.g. JEI took over and returned, or window
+        // resized): keep the field, just re-bind the widget host so the page's search box etc.
+        // get re-registered.
+        if (leftPanel == null) {
+            leftPanel = new LeftPanel(
+                    widgetHost,
+                    RebuildTrigger.index(),
+                    new LeftPanel.Callbacks(
+                            this::addRecipeNode,
+                            this::addSourceNode,
+                            this::addSinkNode,
+                            this::addSplitterNode,
+                            this::addMergerNode,
+                            this::addOutputNode,
+                            this::switchFactory,
+                            this::createFactory,
+                            this::deleteFactory,
+                            this::renameFactory,
+                            this::refreshFactories,
+                            FactoryFileStore::openFactoriesFolder,
+                            this::addLimiterNode,
+                            this::addFilterNode),
+                    null);
+            leftPanel.open();
+        } else {
+            leftPanel.reattachWidgetHost(widgetHost);
+        }
 
         recomputeLayout();
     }
 
-    /** Set the current design AND propagate to the factory store so persistence stays in sync. */
+    /** Set the current design AND propagate to the factory store so persistence stays in sync.
+     *  Per-file auto-save keeps {@code cogwheel/factories/<name>.json} consistent with in-memory
+     *  state so users can share factories without thinking about Ctrl+S. */
     private void setDesign(Design newDesign) {
         this.design = newDesign;
         FactoryStore.get().updateCurrent(newDesign);
+        Factory now = FactoryStore.get().current();
+        if (now != null) FactoryFileStore.saveFactory(now);
     }
 
     private void switchFactory(java.util.UUID factoryId) {
@@ -148,6 +173,7 @@ public class EditorScreen extends Screen {
             this.design = now.design();
             canvas.clearSelection();
             canvas.setSelectedEdge(null);
+            editingNodeId = null;
             showBanner("Switched to: " + now.name());
         }
     }
@@ -157,6 +183,8 @@ public class EditorScreen extends Screen {
         this.design = created.design();
         canvas.clearSelection();
         canvas.setSelectedEdge(null);
+        editingNodeId = null;
+        FactoryFileStore.saveFactory(created);
         showBanner("Created: " + created.name());
     }
 
@@ -164,6 +192,7 @@ public class EditorScreen extends Screen {
         Factory victim = FactoryStore.get().findById(factoryId);
         String name = victim != null ? victim.name() : "factory";
         FactoryStore.get().delete(factoryId);
+        FactoryFileStore.deleteFactoryFile(factoryId);
         Factory now = FactoryStore.get().current();
         if (now == null) {
             FactoryStore.get().bootstrapIfEmpty("Default Factory");
@@ -172,12 +201,29 @@ public class EditorScreen extends Screen {
         this.design = now.design();
         canvas.clearSelection();
         canvas.setSelectedEdge(null);
+        editingNodeId = null;
         showBanner("Deleted: " + name);
     }
 
     private void renameFactory(java.util.UUID factoryId, String newName) {
         FactoryStore.get().rename(factoryId, newName);
+        Factory renamed = FactoryStore.get().findById(factoryId);
+        if (renamed != null) FactoryFileStore.saveFactory(renamed);
         showBanner("Renamed");
+    }
+
+    private void refreshFactories() {
+        int n = FactoryFileStore.loadAll();
+        Factory now = FactoryStore.get().current();
+        if (now == null) {
+            FactoryStore.get().bootstrapIfEmpty("Default Factory");
+            now = FactoryStore.get().current();
+        }
+        this.design = now.design();
+        canvas.clearSelection();
+        canvas.setSelectedEdge(null);
+        editingNodeId = null;
+        showBanner("Refreshed: " + n + " factories");
     }
 
     /**
@@ -206,24 +252,20 @@ public class EditorScreen extends Screen {
     }
 
     private boolean isPropertiesPanelShown() {
-        return canvas.selectedNodeId() != null && !propertiesPanelClosed;
+        return editingNodeId != null && design.findNode(editingNodeId) != null;
     }
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         super.render(graphics, mouseX, mouseY, partialTick);
 
-        // Reset the closed flag whenever the selection changes — a fresh selection always shows
-        // its properties, even if the user had closed the panel on the previous selection.
-        UUID currentSelection = canvas.selectedNodeId();
-        if (!Objects.equals(currentSelection, lastSelectionForPanel)) {
-            lastSelectionForPanel = currentSelection;
-            propertiesPanelClosed = false;
-        }
-
         recomputeLayout();
 
-        properties.setSelected(design.findNode(canvas.selectedNodeId()));
+        if (isPropertiesPanelShown()) {
+            properties.setSelected(design.findNode(editingNodeId));
+        } else {
+            properties.setSelected(null);
+        }
 
         CanvasRenderer.render(graphics, canvas, design, canvasX, canvasY, canvasW, canvasH);
         if (leftPanel != null && leftPanel.isOpen()) {
@@ -238,7 +280,7 @@ public class EditorScreen extends Screen {
 
         renderToggleButton(graphics, mouseX, mouseY);
 
-        graphics.drawCenteredString(this.font, this.title, canvasX + canvasW / 2, 8, 0xFFFFFFFF);
+        renderCanvasHeader(graphics);
         renderBanner(graphics);
 
         // Context menu renders on top of everything, in screen space (not pose-transformed).
@@ -271,6 +313,19 @@ public class EditorScreen extends Screen {
                 tx + (TOGGLE_SIZE - iconW) / 2,
                 ty + (TOGGLE_SIZE - 8) / 2,
                 0xFFFFFFFF, false);
+    }
+
+    /**
+     * Header strip at the top of the canvas viewport: "Cogwheel · {current factory name}".
+     * Width-fits the canvas so it doesn't overlap the toggle button or banner.
+     */
+    private void renderCanvasHeader(GuiGraphics graphics) {
+        Factory cur = FactoryStore.get().current();
+        String factoryName = cur != null ? cur.name() : "—";
+        String title = this.title.getString() + " · " + factoryName;
+        int tw = this.font.width(title);
+        int tx = canvasX + (canvasW - tw) / 2;
+        graphics.drawString(this.font, title, tx, 8, 0xFFFFFFFF, true);
     }
 
     private void renderBanner(GuiGraphics graphics) {
@@ -345,7 +400,16 @@ public class EditorScreen extends Screen {
             Optional<Node> hit = HitTest.nodeAt(design, world.x(), world.y());
             if (hit.isPresent()) {
                 Node node = hit.get();
+                long now = System.currentTimeMillis();
+                boolean isDoubleClick = node.id().equals(lastClickedNodeId)
+                        && (now - lastClickedAt) < DOUBLE_CLICK_MS;
+                lastClickedNodeId = node.id();
+                lastClickedAt = now;
                 canvas.setSelectedNodeId(node.id());
+                if (isDoubleClick) {
+                    editingNodeId = node.id();
+                    return true; // don't start a drag on the second click
+                }
                 canvas.startNodeDrag(node.id(), node.position(), world.x(), world.y());
                 return true;
             }
@@ -364,13 +428,29 @@ public class EditorScreen extends Screen {
             Optional<Node> nodeHit = HitTest.nodeAt(design, world.x(), world.y());
             if (nodeHit.isPresent()) {
                 Node node = nodeHit.get();
-                contextMenu.show((int) mouseX, (int) mouseY, List.of(
-                        new ContextMenu.Option("Delete node", () -> {
-                            setDesign(design.withNodeRemoved(node.id()));
-                            if (node.id().equals(canvas.selectedNodeId())) {
-                                canvas.clearSelection();
-                            }
-                        })));
+                List<ContextMenu.Option> opts = new java.util.ArrayList<>();
+                opts.add(new ContextMenu.Option("Edit", () -> {
+                    canvas.setSelectedNodeId(node.id());
+                    editingNodeId = node.id();
+                }));
+                opts.add(new ContextMenu.Option("Clone", () -> {
+                    Node copy = cloneNodeAtOffset(node, 24, 24);
+                    setDesign(design.withNodeAdded(copy));
+                    canvas.setSelectedNodeId(copy.id());
+                }));
+                if (node instanceof RecipeNode rn && JeiBridge.getRuntime() != null) {
+                    RecipeEntry entry = RebuildTrigger.index().byId(rn.recipeId());
+                    if (entry != null) {
+                        opts.add(new ContextMenu.Option("View in JEI",
+                                () -> JeiBridge.showRecipeInJei(entry.typeId(), entry.id())));
+                    }
+                }
+                opts.add(new ContextMenu.Option("Delete", () -> {
+                    setDesign(design.withNodeRemoved(node.id()));
+                    if (node.id().equals(canvas.selectedNodeId())) canvas.clearSelection();
+                    if (node.id().equals(editingNodeId)) editingNodeId = null;
+                }));
+                contextMenu.show((int) mouseX, (int) mouseY, opts);
                 return true;
             }
             Optional<Edge> edgeHit = HitTest.edgeAt(design, world.x(), world.y(), EDGE_HIT_RADIUS);
@@ -387,6 +467,9 @@ public class EditorScreen extends Screen {
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        // Drag-from-sidebar release — leftPanel's page decides whether it was a click or a drag,
+        // and if dropped on the canvas, fires the drop callback that adds a node.
+        if (leftPanel != null && leftPanel.mouseReleased(mouseX, mouseY, button)) return true;
         if (isPropertiesPanelShown() && properties.mouseReleased(mouseX, mouseY, button)) return true;
         if (button == MIDDLE_MOUSE_BUTTON) {
             panning = false;
@@ -415,6 +498,9 @@ public class EditorScreen extends Screen {
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        // Always notify the panel of mouse movement so its drag tracker can promote a held click
+        // into a drag (the panel itself only acts on release).
+        if (leftPanel != null) leftPanel.mouseDragged(mouseX, mouseY);
         if (isPropertiesPanelShown() && properties.mouseDragged(mouseX, mouseY, button, dragX, dragY)) return true;
         if (panning) {
             canvas.pan(dragX, dragY);
@@ -504,15 +590,51 @@ public class EditorScreen extends Screen {
         canvas.setSelectedNodeId(node.id());
     }
 
+    private void addLimiterNode() {
+        LimiterNode node = new LimiterNode(UUID.randomUUID(), canvasCenter(), LimiterNode.DEFAULT_LIMIT);
+        setDesign(design.withNodeAdded(node));
+        canvas.setSelectedNodeId(node.id());
+    }
+
+    private void addFilterNode() {
+        FilterNode node = new FilterNode(UUID.randomUUID(), canvasCenter(), ItemStack.EMPTY);
+        setDesign(design.withNodeAdded(node));
+        canvas.setSelectedNodeId(node.id());
+    }
+
     private void addOutputNode(Item item) {
         OutputNode node = dev.kima.cogwheel.recipe.RecipeNodeFactory.output(item, canvasCenter());
         setDesign(design.withNodeAdded(node));
         canvas.setSelectedNodeId(node.id());
     }
 
-    private void replaceSelectedNode(Node updated) {
-        if (canvas.selectedNodeId() == null) return;
-        setDesign(design.withNodeReplaced(canvas.selectedNodeId(), updated));
+    private void replaceEditingNode(Node updated) {
+        if (editingNodeId == null) return;
+        setDesign(design.withNodeReplaced(editingNodeId, updated));
+    }
+
+    private Node cloneNodeAtOffset(Node source, int dx, int dy) {
+        Vec2 newPos = new Vec2(source.position().x() + dx, source.position().y() + dy);
+        UUID newId = UUID.randomUUID();
+        if (source instanceof RecipeNode rn) {
+            return new RecipeNode(newId, newPos, rn.recipeId(), rn.title(), rn.icon(),
+                    rn.inputs(), rn.outputs(), rn.parallelism());
+        } else if (source instanceof SourceNode sn) {
+            return new SourceNode(newId, newPos, sn.item(), sn.kind(), sn.externalRef());
+        } else if (source instanceof SinkNode sn) {
+            return new SinkNode(newId, newPos, sn.item());
+        } else if (source instanceof SplitterNode sp) {
+            return new SplitterNode(newId, newPos, sp.outputCount(), sp.mode());
+        } else if (source instanceof MergerNode mn) {
+            return new MergerNode(newId, newPos, mn.inputCount());
+        } else if (source instanceof OutputNode on) {
+            return new OutputNode(newId, newPos, on.item(), on.exportName());
+        } else if (source instanceof LimiterNode ln) {
+            return new LimiterNode(newId, newPos, ln.limitPerMin());
+        } else if (source instanceof FilterNode fn) {
+            return new FilterNode(newId, newPos, fn.matchItem());
+        }
+        return source;
     }
 
     private void onSwapRecipeRequested() {
@@ -553,6 +675,18 @@ public class EditorScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        // R/U on a hovered sidebar item → open JEI recipes / uses. Check this BEFORE vanilla
+        // widget consumption so it works while the search box exists but isn't focused.
+        if (leftPanel != null && leftPanel.isOpen()) {
+            int mx = (int) Minecraft.getInstance().mouseHandler.xpos()
+                    * this.width / Math.max(1, Minecraft.getInstance().getWindow().getScreenWidth());
+            int my = (int) Minecraft.getInstance().mouseHandler.ypos()
+                    * this.height / Math.max(1, Minecraft.getInstance().getWindow().getScreenHeight());
+            if (leftPanel.contains(mx, my)
+                    && (keyCode == GLFW.GLFW_KEY_R || keyCode == GLFW.GLFW_KEY_U)) {
+                if (leftPanel.keyPressed(keyCode, scanCode, modifiers, mx, my)) return true;
+            }
+        }
         // Allow the EditBox / other vanilla widgets to consume keys first (typing in the search box
         // shouldn't trigger Ctrl+S or Delete).
         if (super.keyPressed(keyCode, scanCode, modifiers)) return true;
@@ -569,6 +703,7 @@ public class EditorScreen extends Screen {
             if (sNode != null) {
                 setDesign(design.withNodeRemoved(sNode));
                 canvas.clearSelection();
+                if (sNode.equals(editingNodeId)) editingNodeId = null;
                 return true;
             }
             return false;
@@ -576,22 +711,20 @@ public class EditorScreen extends Screen {
 
         boolean ctrl = (modifiers & GLFW.GLFW_MOD_CONTROL) != 0;
         if (ctrl && keyCode == GLFW.GLFW_KEY_S) {
-            boolean ok = FactoryFileStore.save();
-            showBanner(ok ? "Saved" : "Save failed (see log)");
+            boolean ok = FactoryFileStore.saveAll();
+            showBanner(ok ? "Saved " + FactoryStore.get().all().size() + " factories" : "Save failed (see log)");
             return true;
         }
         if (ctrl && keyCode == GLFW.GLFW_KEY_O) {
-            if (FactoryFileStore.load()) {
-                Factory now = FactoryStore.get().current();
-                if (now != null) {
-                    this.design = now.design();
-                    canvas.clearSelection();
-                    canvas.setSelectedEdge(null);
-                }
-                showBanner("Reloaded from disk");
-            } else {
-                showBanner("No saved store");
+            int n = FactoryFileStore.loadAll();
+            Factory now = FactoryStore.get().current();
+            if (now != null) {
+                this.design = now.design();
+                canvas.clearSelection();
+                canvas.setSelectedEdge(null);
+                editingNodeId = null;
             }
+            showBanner("Loaded " + n + " factories from disk");
             return true;
         }
         return false;

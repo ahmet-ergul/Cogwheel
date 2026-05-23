@@ -34,4 +34,16 @@ public record RecipeNode(
         int clamped = Math.max(1, Math.min(256, newParallelism));
         return new RecipeNode(id, position, recipeId, title, icon, inputs, outputs, clamped);
     }
+
+    /** Replace the display ItemStack of a specific input port — used when the user picks a
+     *  specific variant for a multi-alternative tag-backed ingredient. The label is also updated
+     *  to the new item's display name so the props panel + canvas text track the chosen variant. */
+    public RecipeNode withInputDisplay(int portIndex, ItemStack newDisplay) {
+        if (portIndex < 0 || portIndex >= inputs.size()) return this;
+        java.util.List<Port> newInputs = new java.util.ArrayList<>(inputs);
+        Port p = newInputs.get(portIndex);
+        String newLabel = newDisplay.isEmpty() ? p.label() : newDisplay.getHoverName().getString();
+        newInputs.set(portIndex, new Port(p.index(), p.type(), newLabel, newDisplay));
+        return new RecipeNode(id, position, recipeId, title, icon, List.copyOf(newInputs), outputs, parallelism);
+    }
 }

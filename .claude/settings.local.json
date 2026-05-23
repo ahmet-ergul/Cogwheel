@@ -5,7 +5,11 @@
       "WebSearch",
       "WebFetch(domain:docs.neoforged.net)",
       "WebFetch(domain:lexxie.dev)",
-      "Bash(dir C:\\\\Users\\\\shift\\\\Projects\\\\Cogwheel)"
+      "Bash(dir C:\\\\Users\\\\shift\\\\Projects\\\\Cogwheel)",
+      "Bash(xargs grep -l \"IRecipesGui\\\\|IJeiRuntime\")",
+      "Bash(xargs grep -l \"tick\\\\|cycle\")",
+      "Bash(xargs grep -n \"mouseClicked\\\\|click\")",
+      "Bash(ls \"C:\\\\Users\\\\shift\\\\.claude\\\\plans\" 2>&1 | head -5)"
     ]
   }
 }

@@ -3,7 +3,11 @@ package dev.kima.cogwheel.client.ui.canvas;
 import dev.kima.cogwheel.model.Node;
 import dev.kima.cogwheel.model.Port;
 import dev.kima.cogwheel.model.PortType;
+import dev.kima.cogwheel.model.RecipeNode;
 import dev.kima.cogwheel.model.Vec2;
+import dev.kima.cogwheel.recipe.IngredientStack;
+import dev.kima.cogwheel.recipe.RecipeEntry;
+import dev.kima.cogwheel.recipe.RecipeIndex;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
@@ -14,10 +18,15 @@ import net.minecraft.world.item.ItemStack;
  * Plain rectangle + 1px border — rounded corners can come in Phase 9 polish.
  */
 public final class NodeRenderer {
-    public static final int NODE_WIDTH = 144;
-    public static final int HEADER_HEIGHT = 22;
-    public static final int PORT_ROW_HEIGHT = 18;
-    public static final int PORT_DOT_RADIUS = 4;
+    public static final int NODE_WIDTH = 116;
+    public static final int HEADER_HEIGHT = 16;
+    public static final int PORT_ROW_HEIGHT = 16;
+    public static final int PORT_DOT_RADIUS = 3;
+    /** Scale factor applied to item icons and node title text. Items render at 16 px natively;
+     *  at 0.8 they're ~13 px — noticeably smaller without becoming illegible. Text is the vanilla
+     *  9-px font scaled the same way. */
+    private static final float CONTENT_SCALE = 0.8f;
+    private static final int ICON_PX = Math.round(16 * CONTENT_SCALE);
 
     public static final int BG_COLOR    = 0xEE1F2233;
     public static final int BORDER      = 0xFF54607A;
@@ -44,7 +53,8 @@ public final class NodeRenderer {
         return new Vec2(x, y);
     }
 
-    public static void render(GuiGraphics graphics, Node node, boolean selected, PortDisplayResolver resolver) {
+    public static void render(GuiGraphics graphics, Node node, boolean selected,
+                              PortDisplayResolver resolver, RecipeIndex index) {
         Font font = Minecraft.getInstance().font;
         int x = (int) node.position().x();
         int y = (int) node.position().y();
@@ -63,9 +73,16 @@ public final class NodeRenderer {
         // Header.
         graphics.fill(x, y, x + w, y + HEADER_HEIGHT, HEADER_BG);
         if (!node.icon().isEmpty()) {
-            graphics.renderItem(node.icon(), x + 3, y + 3);
+            renderScaledItem(graphics, node.icon(), x + 2, y + 2);
         }
-        graphics.drawString(font, truncate(font, node.title().getString(), w - 22), x + 22, y + 7, TEXT, false);
+        int titleX = x + ICON_PX + 4;
+        int scaledTitleMax = (int) ((w - titleX + x) / CONTENT_SCALE);
+        renderScaledText(graphics, font, truncate(font, node.title().getString(), scaledTitleMax),
+                titleX, y + 5, TEXT);
+
+        // Resolve the recipe entry once for count-badge lookup. Null for non-RecipeNodes or when
+        // the index doesn't have the recipe (mod removed, pre-rebuild, etc.) — falls back to no badge.
+        RecipeEntry entry = (index != null && node instanceof RecipeNode rn) ? index.byId(rn.recipeId()) : null;
 
         // Input ports (left side). Use the resolver's effective display so wildcard ports
         // (Splitter/Merger) show whatever's flowing through them.
@@ -73,17 +90,40 @@ public final class NodeRenderer {
             ItemStack effective = resolver != null
                     ? resolver.inputDisplay(node.id(), p.index())
                     : p.display();
-            renderPort(graphics, node, p, false, effective);
+            int count = lookupInputCount(entry, p.index());
+            renderPort(graphics, font, node, p, false, effective, count);
         }
         for (Port p : node.outputs()) {
             ItemStack effective = resolver != null
                     ? resolver.outputDisplay(node.id(), p.index())
                     : p.display();
-            renderPort(graphics, node, p, true, effective);
+            // Outputs already encode count via ItemStack.getCount(); badge from that.
+            int count = lookupOutputCount(entry, p.index(), effective);
+            renderPort(graphics, font, node, p, true, effective, count);
         }
     }
 
-    private static void renderPort(GuiGraphics graphics, Node node, Port port, boolean output, ItemStack effectiveDisplay) {
+    private static int lookupInputCount(RecipeEntry entry, int portIndex) {
+        if (entry == null) return 1;
+        var inputs = entry.inputs();
+        if (portIndex < 0 || portIndex >= inputs.size()) return 1;
+        IngredientStack stack = inputs.get(portIndex);
+        return Math.max(1, stack.count());
+    }
+
+    private static int lookupOutputCount(RecipeEntry entry, int portIndex, ItemStack effective) {
+        if (entry != null) {
+            var outputs = entry.outputs();
+            if (portIndex >= 0 && portIndex < outputs.size()) {
+                int c = outputs.get(portIndex).getCount();
+                if (c > 0) return c;
+            }
+        }
+        return Math.max(1, effective.getCount());
+    }
+
+    private static void renderPort(GuiGraphics graphics, Font font, Node node, Port port,
+                                   boolean output, ItemStack effectiveDisplay, int count) {
         Vec2 center = portCenter(node, port.index(), output);
         int cx = (int) center.x();
         int cy = (int) center.y();
@@ -95,11 +135,47 @@ public final class NodeRenderer {
 
         // Item icon next to the dot, inside the node body. effectiveDisplay falls back to
         // Port.display() if the resolver couldn't infer anything (e.g. unconnected wildcard).
-        int iconX = output ? cx - 22 : cx + 6;
+        int gap = 3;
+        int iconX = output ? cx - PORT_DOT_RADIUS - gap - ICON_PX : cx + PORT_DOT_RADIUS + gap;
+        int iconY = cy - ICON_PX / 2;
         ItemStack toRender = effectiveDisplay.isEmpty() ? port.display() : effectiveDisplay;
         if (!toRender.isEmpty()) {
-            graphics.renderItem(toRender, iconX, cy - 8);
+            renderScaledItem(graphics, toRender, iconX, iconY);
+            if (count > 1) {
+                // renderItemDecorations writes at the item's high Z layer, so the badge sits over
+                // the icon instead of vanishing beneath it.
+                renderScaledItemDecorations(graphics, font, toRender, iconX, iconY, "×" + count);
+            }
         }
+    }
+
+    private static void renderScaledItem(GuiGraphics graphics, ItemStack stack, int x, int y) {
+        var pose = graphics.pose();
+        pose.pushPose();
+        pose.translate(x, y, 0);
+        pose.scale(CONTENT_SCALE, CONTENT_SCALE, 1f);
+        graphics.renderItem(stack, 0, 0);
+        pose.popPose();
+    }
+
+    private static void renderScaledItemDecorations(GuiGraphics graphics, Font font, ItemStack stack,
+                                                    int x, int y, String text) {
+        var pose = graphics.pose();
+        pose.pushPose();
+        pose.translate(x, y, 0);
+        pose.scale(CONTENT_SCALE, CONTENT_SCALE, 1f);
+        graphics.renderItemDecorations(font, stack, 0, 0, text);
+        pose.popPose();
+    }
+
+    private static void renderScaledText(GuiGraphics graphics, Font font, String text,
+                                         int x, int y, int color) {
+        var pose = graphics.pose();
+        pose.pushPose();
+        pose.translate(x, y, 0);
+        pose.scale(CONTENT_SCALE, CONTENT_SCALE, 1f);
+        graphics.drawString(font, text, 0, 0, color, false);
+        pose.popPose();
     }
 
     private static String truncate(Font font, String s, int maxWidth) {

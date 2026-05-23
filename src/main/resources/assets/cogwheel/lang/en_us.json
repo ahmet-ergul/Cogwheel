@@ -4,6 +4,8 @@
   "screen.cogwheel.editor.title": "Cogwheel",
   "screen.cogwheel.toolbox.search": "Search items",
   "screen.cogwheel.recipe_picker": "Choose recipe for %s",
+  "screen.cogwheel.recipe_picker.count": "%d recipes",
+  "screen.cogwheel.recipe_picker.jei_hint": "right-click → JEI",
 
   "screen.cogwheel.left.categories": "Categories",
   "screen.cogwheel.category.recipes": "Recipes",
@@ -23,6 +25,10 @@
   "screen.cogwheel.logic.splitter.subtitle": "1 input → N outputs",
   "screen.cogwheel.logic.merger": "Merger",
   "screen.cogwheel.logic.merger.subtitle": "N inputs → 1 output",
+  "screen.cogwheel.logic.limiter": "Limiter",
+  "screen.cogwheel.logic.limiter.subtitle": "Cap flow; excess voided",
+  "screen.cogwheel.logic.filter": "Filter",
+  "screen.cogwheel.logic.filter.subtitle": "Route one item; reject the rest",
 
   "node.cogwheel.source.manual": "Source",
   "node.cogwheel.source.external_factory": "External Factory",
@@ -31,6 +37,8 @@
   "node.cogwheel.sink": "Sink",
   "node.cogwheel.splitter": "Splitter",
   "node.cogwheel.merger": "Merger",
+  "node.cogwheel.limiter": "Limiter",
+  "node.cogwheel.filter": "Filter",
 
   "screen.cogwheel.external_picker.title": "Choose external output",
   "screen.cogwheel.factories": "Factories"

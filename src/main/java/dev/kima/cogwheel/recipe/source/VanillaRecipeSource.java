@@ -1,7 +1,6 @@
 package dev.kima.cogwheel.recipe.source;
 
 import dev.kima.cogwheel.CogwheelConstants;
-import dev.kima.cogwheel.recipe.RecipeEntry;
 import dev.kima.cogwheel.recipe.RecipeIndex;
 import dev.kima.cogwheel.recipe.adapter.RecipeAdapterRegistry;
 import net.minecraft.client.Minecraft;
@@ -10,7 +9,8 @@ import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.world.item.crafting.RecipeManager;
 
-import java.util.Optional;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * Pulls every recipe out of the client-side {@link RecipeManager} and feeds them through
@@ -44,20 +44,22 @@ public final class VanillaRecipeSource {
 
         target.clear();
         int adapted = 0, skipped = 0;
+        Map<String, Integer> byAdapter = new LinkedHashMap<>();
         var registry = RecipeAdapterRegistry.get();
         for (var holder : rm.getRecipes()) {
-            Optional<RecipeEntry> entry;
+            RecipeAdapterRegistry.AttemptResult attempt;
             try {
-                entry = registry.adapt(holder, registries);
+                attempt = registry.adaptWithName(holder, registries);
             } catch (Throwable t) {
                 CogwheelConstants.LOG.debug(
                         "Adapter threw for recipe {} ({}): {}",
                         holder.id(), holder.value().getType(), t.toString());
-                entry = Optional.empty();
+                attempt = new RecipeAdapterRegistry.AttemptResult("threw:" + t.getClass().getSimpleName(), java.util.Optional.empty());
             }
-            if (entry.isPresent()) {
-                target.add(entry.get());
+            if (attempt.result().isPresent()) {
+                target.add(attempt.result().get());
                 adapted++;
+                byAdapter.merge(attempt.adapterName(), 1, Integer::sum);
             } else {
                 skipped++;
             }
@@ -67,6 +69,7 @@ public final class VanillaRecipeSource {
         CogwheelConstants.LOG.info(
                 "RecipeIndex built: {} adapted, {} skipped, {} ms",
                 adapted, skipped, elapsedMs);
+        CogwheelConstants.LOG.info("Cogwheel adapters: {}", byAdapter);
         return adapted;
     }
 

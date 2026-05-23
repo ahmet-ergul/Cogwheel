@@ -39,6 +39,21 @@ public record IngredientStack(
     }
 
     /**
+     * Key used to decide whether two stacks describe the "same" ingredient and can be merged
+     * (summing their counts). Tag-backed stacks are equal iff their tag keys match — even if the
+     * resolved item lists happen to match a non-tag stack, the semantic meaning differs (a tag
+     * accepts mod-added alternatives at runtime). Untagged stacks are equal iff their matching-items
+     * lists are equal in order.
+     */
+    public Object groupingKey() {
+        return tag.isPresent() ? (Object) tag.get() : matchingItems;
+    }
+
+    public IngredientStack withCount(int newCount) {
+        return new IngredientStack(matchingItems, tag, newCount);
+    }
+
+    /**
      * Builds an {@code IngredientStack} from a vanilla {@link Ingredient} with the given count.
      * Falls back to {@link #EMPTY} for empty/no-items ingredients.
      */

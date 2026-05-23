@@ -4,6 +4,7 @@ import com.simibubi.create.content.processing.recipe.ProcessingOutput;
 import com.simibubi.create.content.processing.recipe.ProcessingRecipe;
 import dev.kima.cogwheel.recipe.FluidIngredientStack;
 import dev.kima.cogwheel.recipe.IngredientStack;
+import dev.kima.cogwheel.recipe.IngredientStacks;
 import dev.kima.cogwheel.recipe.RecipeEntry;
 import dev.kima.cogwheel.recipe.adapter.RecipeAdapter;
 import net.minecraft.core.HolderLookup;
@@ -56,10 +57,11 @@ public final class ProcessingRecipeAdapter implements RecipeAdapter {
             return Optional.empty();
         }
 
-        List<IngredientStack> inputs = processing.getIngredients().stream()
+        List<IngredientStack> rawInputs = processing.getIngredients().stream()
                 .map(IngredientStack::fromIngredient)
                 .filter(stack -> !stack.isEmpty())
                 .toList();
+        List<IngredientStack> inputs = IngredientStacks.groupEquivalents(rawInputs);
 
         List<ItemStack> outputs = processing.getRollableResults().stream()
                 .map(ProcessingOutput::getStack)

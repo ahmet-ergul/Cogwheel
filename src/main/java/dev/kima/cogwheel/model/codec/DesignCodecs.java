@@ -7,6 +7,8 @@ import dev.kima.cogwheel.model.Design;
 import dev.kima.cogwheel.model.Edge;
 import dev.kima.cogwheel.model.ExternalRef;
 import dev.kima.cogwheel.model.Factory;
+import dev.kima.cogwheel.model.FilterNode;
+import dev.kima.cogwheel.model.LimiterNode;
 import dev.kima.cogwheel.model.MergerNode;
 import dev.kima.cogwheel.model.Node;
 import dev.kima.cogwheel.model.OutputNode;
@@ -101,10 +103,15 @@ public final class DesignCodecs {
             ITEM_STACK.fieldOf("item").forGetter(SinkNode::item)
     ).apply(i, SinkNode::new));
 
+    public static final Codec<SplitterNode.Mode> SPLITTER_MODE = Codec.STRING.xmap(
+            SplitterNode.Mode::valueOf,
+            SplitterNode.Mode::name);
+
     public static final MapCodec<SplitterNode> SPLITTER_NODE = RecordCodecBuilder.mapCodec(i -> i.group(
             UUIDUtil.CODEC.fieldOf("id").forGetter(SplitterNode::id),
             VEC2.fieldOf("position").forGetter(SplitterNode::position),
-            Codec.INT.fieldOf("output_count").forGetter(SplitterNode::outputCount)
+            Codec.INT.fieldOf("output_count").forGetter(SplitterNode::outputCount),
+            SPLITTER_MODE.optionalFieldOf("mode", SplitterNode.Mode.DEMAND).forGetter(SplitterNode::mode)
     ).apply(i, SplitterNode::new));
 
     public static final MapCodec<MergerNode> MERGER_NODE = RecordCodecBuilder.mapCodec(i -> i.group(
@@ -119,6 +126,18 @@ public final class DesignCodecs {
             ITEM_STACK.fieldOf("item").forGetter(OutputNode::item),
             Codec.STRING.fieldOf("export_name").forGetter(OutputNode::exportName)
     ).apply(i, OutputNode::new));
+
+    public static final MapCodec<LimiterNode> LIMITER_NODE = RecordCodecBuilder.mapCodec(i -> i.group(
+            UUIDUtil.CODEC.fieldOf("id").forGetter(LimiterNode::id),
+            VEC2.fieldOf("position").forGetter(LimiterNode::position),
+            Codec.DOUBLE.fieldOf("limit_per_min").forGetter(LimiterNode::limitPerMin)
+    ).apply(i, LimiterNode::new));
+
+    public static final MapCodec<FilterNode> FILTER_NODE = RecordCodecBuilder.mapCodec(i -> i.group(
+            UUIDUtil.CODEC.fieldOf("id").forGetter(FilterNode::id),
+            VEC2.fieldOf("position").forGetter(FilterNode::position),
+            ITEM_STACK.fieldOf("match_item").forGetter(FilterNode::matchItem)
+    ).apply(i, FilterNode::new));
 
     public static final Codec<Node> NODE = Codec.STRING.dispatch(
             "type",
@@ -147,6 +166,8 @@ public final class DesignCodecs {
         if (node instanceof SplitterNode) return "splitter";
         if (node instanceof MergerNode) return "merger";
         if (node instanceof OutputNode) return "output";
+        if (node instanceof LimiterNode) return "limiter";
+        if (node instanceof FilterNode) return "filter";
         throw new IllegalStateException("Unknown node type: " + node.getClass().getName());
     }
 
@@ -158,6 +179,8 @@ public final class DesignCodecs {
             case "splitter" -> SPLITTER_NODE;
             case "merger"   -> MERGER_NODE;
             case "output"   -> OUTPUT_NODE;
+            case "limiter"  -> LIMITER_NODE;
+            case "filter"   -> FILTER_NODE;
             default         -> throw new IllegalArgumentException("Unknown node type: " + name);
         };
     }

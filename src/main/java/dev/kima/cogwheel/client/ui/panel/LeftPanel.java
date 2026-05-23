@@ -25,11 +25,11 @@ import java.util.function.Consumer;
  * Notes / Factory switcher). The back button in the header pops to the previous page.
  */
 public final class LeftPanel {
-    public static final int WIDTH = 180;
-    private static final int HEADER_HEIGHT = 22;
-    private static final int PADDING = 6;
-    private static final int CLOSE_SIZE = 12;
-    private static final int BACK_SIZE = 12;
+    public static final int WIDTH = 152;
+    private static final int HEADER_HEIGHT = 18;
+    private static final int PADDING = 5;
+    private static final int CLOSE_SIZE = 10;
+    private static final int BACK_SIZE = 10;
 
     private static final int BG_COLOR = 0xFF131726;
     private static final int BORDER = 0xFF2A3148;
@@ -48,10 +48,16 @@ public final class LeftPanel {
             java.util.function.Consumer<java.util.UUID> onSwitchFactory,
             Consumer<String> onCreateFactory,
             java.util.function.Consumer<java.util.UUID> onDeleteFactory,
-            java.util.function.BiConsumer<java.util.UUID, String> onRenameFactory
+            java.util.function.BiConsumer<java.util.UUID, String> onRenameFactory,
+            Runnable onRefreshFactories,
+            Runnable onOpenFactoriesFolder,
+            Runnable onAddLimiter,
+            Runnable onAddFilter
     ) {}
 
-    private final LeftPanelPage.WidgetHost widgetHost;
+    /** Mutable so the panel survives a parent-screen re-init: the WidgetHost is bound to a Screen
+     *  instance, and clearing/re-adding widgets needs an up-to-date reference. */
+    private LeftPanelPage.WidgetHost widgetHost;
     private final RecipeIndex index;
     private final Callbacks callbacks;
     private final Runnable onClose;
@@ -90,6 +96,16 @@ public final class LeftPanel {
         } else {
             relayoutCurrentPage();
             pageStack.peek().onShow(widgetHost);
+        }
+    }
+
+    /** Called when the parent screen re-inits (which clears all child widgets). Re-binds the
+     *  WidgetHost and re-registers the current page's widgets so search boxes etc. survive
+     *  navigating into JEI and back. */
+    public void reattachWidgetHost(LeftPanelPage.WidgetHost host) {
+        this.widgetHost = host;
+        if (open && !pageStack.isEmpty()) {
+            pageStack.peek().onShow(host);
         }
     }
 
@@ -217,6 +233,28 @@ public final class LeftPanel {
         return true;
     }
 
+    /** Forward to the current page. Returning false here means the parent screen will keep
+     *  processing the event (so node drags etc. still work outside the panel). */
+    public boolean mouseReleased(double sx, double sy, int button) {
+        if (!open || pageStack.isEmpty()) return false;
+        return pageStack.peek().mouseReleased(sx, sy, button);
+    }
+
+    /** Notify the current page of mouse movement during a drag — used by ItemListPage to promote
+     *  a click into a drag once the cursor crosses the drag threshold. */
+    public void mouseDragged(double sx, double sy) {
+        if (!open || pageStack.isEmpty()) return;
+        if (pageStack.peek() instanceof ItemListPage ilp) {
+            ilp.mouseDragged(sx, sy);
+        }
+    }
+
+    /** R/U on hover come through here; the page decides what to do based on the hovered item. */
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers, int mouseX, int mouseY) {
+        if (!open || pageStack.isEmpty()) return false;
+        return pageStack.peek().keyPressed(keyCode, scanCode, modifiers, mouseX, mouseY);
+    }
+
     private static boolean hits(double sx, double sy, int x, int y, int w, int h) {
         return sx >= x && sx <= x + w && sy >= y && sy < y + h;
     }
@@ -298,7 +336,19 @@ public final class LeftPanel {
                                 Component.translatable("screen.cogwheel.logic.merger"),
                                 Component.translatable("screen.cogwheel.logic.merger.subtitle"),
                                 true,
-                                () -> callbacks.onAddMerger().run())
+                                () -> callbacks.onAddMerger().run()),
+                        new CategoriesPage.Category(
+                                new ItemStack(Items.REDSTONE_TORCH),
+                                Component.translatable("screen.cogwheel.logic.limiter"),
+                                Component.translatable("screen.cogwheel.logic.limiter.subtitle"),
+                                true,
+                                () -> callbacks.onAddLimiter().run()),
+                        new CategoriesPage.Category(
+                                new ItemStack(Items.COMPARATOR),
+                                Component.translatable("screen.cogwheel.logic.filter"),
+                                Component.translatable("screen.cogwheel.logic.filter.subtitle"),
+                                true,
+                                () -> callbacks.onAddFilter().run())
                 ));
     }
 

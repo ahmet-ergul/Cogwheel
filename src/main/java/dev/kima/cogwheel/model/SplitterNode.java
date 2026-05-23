@@ -18,14 +18,30 @@ import java.util.UUID;
 public record SplitterNode(
         UUID id,
         Vec2 position,
-        int outputCount
+        int outputCount,
+        Mode mode
 ) implements Node {
     public static final int MIN_OUTPUTS = 2;
     public static final int MAX_OUTPUTS = 8;
     public static final int DEFAULT_OUTPUTS = 2;
 
+    /** How the splitter is INTENDED to distribute items in-game. Cogwheel's forward-design solver
+     *  treats them all as demand-additive for now (Phase 10+ bottleneck-aware solver will respect
+     *  the difference). The label is shown in the props panel as planning intent. */
+    public enum Mode {
+        DEMAND,        // route by what each downstream needs
+        ROUND_ROBIN,   // alternate items to each output equally
+        PRIORITY       // fill output 0 first, then 1, etc.
+    }
+
     public SplitterNode {
         outputCount = Math.max(MIN_OUTPUTS, Math.min(MAX_OUTPUTS, outputCount));
+        if (mode == null) mode = Mode.DEMAND;
+    }
+
+    /** Back-compat constructor for older callers / saves that don't specify a mode. */
+    public SplitterNode(UUID id, Vec2 position, int outputCount) {
+        this(id, position, outputCount, Mode.DEMAND);
     }
 
     @Override
@@ -54,10 +70,14 @@ public record SplitterNode(
 
     @Override
     public SplitterNode withPosition(Vec2 newPosition) {
-        return new SplitterNode(id, newPosition, outputCount);
+        return new SplitterNode(id, newPosition, outputCount, mode);
     }
 
     public SplitterNode withOutputCount(int newCount) {
-        return new SplitterNode(id, position, newCount);
+        return new SplitterNode(id, position, newCount, mode);
+    }
+
+    public SplitterNode withMode(Mode newMode) {
+        return new SplitterNode(id, position, outputCount, newMode);
     }
 }

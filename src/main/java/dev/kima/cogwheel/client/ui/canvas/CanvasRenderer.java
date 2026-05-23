@@ -3,6 +3,7 @@ package dev.kima.cogwheel.client.ui.canvas;
 import com.mojang.blaze3d.vertex.PoseStack;
 import dev.kima.cogwheel.model.Design;
 import dev.kima.cogwheel.model.Node;
+import dev.kima.cogwheel.recipe.source.RebuildTrigger;
 import net.minecraft.client.gui.GuiGraphics;
 
 /**
@@ -44,7 +45,7 @@ public final class CanvasRenderer {
         graphics.flush();
 
         for (Node node : design.nodes()) {
-            NodeRenderer.render(graphics, node, canvas.isSelected(node.id()), resolver);
+            NodeRenderer.render(graphics, node, canvas.isSelected(node.id()), resolver, RebuildTrigger.index());
         }
 
         pose.popPose();

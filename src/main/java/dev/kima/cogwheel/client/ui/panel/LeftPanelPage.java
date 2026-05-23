@@ -41,4 +41,8 @@ public sealed interface LeftPanelPage permits CategoriesPage, ItemListPage, Fact
     boolean mouseClicked(double mouseX, double mouseY, int button);
 
     boolean mouseScrolled(double mouseX, double mouseY, double scrollY);
+
+    /** Optional hooks — most pages don't care. ItemListPage uses these for drag-to-add and R/U. */
+    default boolean mouseReleased(double mouseX, double mouseY, int button) { return false; }
+    default boolean keyPressed(int keyCode, int scanCode, int modifiers, int mouseX, int mouseY) { return false; }
 }

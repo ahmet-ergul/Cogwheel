@@ -2,6 +2,8 @@ package dev.kima.cogwheel.solver;
 
 import dev.kima.cogwheel.model.Design;
 import dev.kima.cogwheel.model.Edge;
+import dev.kima.cogwheel.model.FilterNode;
+import dev.kima.cogwheel.model.LimiterNode;
 import dev.kima.cogwheel.model.MergerNode;
 import dev.kima.cogwheel.model.Node;
 import dev.kima.cogwheel.model.OutputNode;
@@ -67,6 +69,10 @@ public final class Solver {
                 processSplitter(design, splitter, edgeRates);
             } else if (node instanceof MergerNode merger) {
                 processMerger(design, merger, edgeRates);
+            } else if (node instanceof LimiterNode limiter) {
+                processLimiter(design, limiter, edgeRates);
+            } else if (node instanceof FilterNode filter) {
+                processFilter(design, filter, edgeRates);
             }
         }
 
@@ -189,6 +195,29 @@ public final class Solver {
                 edgeRates.put(inEdge, perInput);
             }
         }
+    }
+
+    /** Limiter caps the flow: input demand = min(downstream demand, limit). Excess is voided. */
+    private static void processLimiter(Design design, LimiterNode limiter, Map<Edge, Double> edgeRates) {
+        Edge outEdge = findOutgoingEdge(design, limiter.id(), 0);
+        Edge inEdge = findIncomingEdge(design, limiter.id(), 0);
+        if (outEdge == null) return;
+        double downstream = edgeRates.getOrDefault(outEdge, 0.0);
+        double effective = Math.min(downstream, limiter.limitPerMin());
+        // Cap the outgoing edge so the downstream sees only what passes through; void the rest.
+        edgeRates.put(outEdge, effective);
+        if (inEdge != null) edgeRates.put(inEdge, effective);
+    }
+
+    /** Filter is wildcard-routed: both outputs together demand from the single input. Solver isn't
+     *  item-aware so it can't preferentially route to the match port — that's planning intent. */
+    private static void processFilter(Design design, FilterNode filter, Map<Edge, Double> edgeRates) {
+        double sumOut = 0;
+        for (Edge e : design.edges()) {
+            if (e.from().equals(filter.id())) sumOut += edgeRates.getOrDefault(e, 0.0);
+        }
+        Edge inEdge = findIncomingEdge(design, filter.id(), 0);
+        if (inEdge != null && sumOut > 0) edgeRates.put(inEdge, sumOut);
     }
 
     private static Edge findIncomingEdge(Design design, UUID nodeId, int portIndex) {

@@ -1,6 +1,7 @@
 package dev.kima.cogwheel.recipe.adapter;
 
 import dev.kima.cogwheel.recipe.IngredientStack;
+import dev.kima.cogwheel.recipe.IngredientStacks;
 import dev.kima.cogwheel.recipe.RecipeEntry;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -37,10 +38,11 @@ public final class CookingAdapter implements RecipeAdapter {
             return Optional.empty();
         }
 
-        List<IngredientStack> inputs = cooking.getIngredients().stream()
+        List<IngredientStack> rawInputs = cooking.getIngredients().stream()
                 .map(IngredientStack::fromIngredient)
                 .filter(stack -> !stack.isEmpty())
                 .toList();
+        List<IngredientStack> inputs = IngredientStacks.groupEquivalents(rawInputs);
 
         ItemStack result = cooking.getResultItem(registries);
         List<ItemStack> outputs = result == null || result.isEmpty() ? List.of() : List.of(result);

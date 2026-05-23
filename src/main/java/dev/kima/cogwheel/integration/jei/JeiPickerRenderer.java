@@ -104,21 +104,28 @@ final class JeiPickerRenderer {
      *       getUid matches.</li>
      * </ul>
      */
-    private static Object findRecipeInstance(IRecipeManager rm, IRecipeCategory<?> category, ResourceLocation entryId) {
-        // Try vanilla RecipeManager (works for crafting/smelting/Create's ProcessingRecipe etc.)
+    static Object findRecipeInstance(IRecipeManager rm, IRecipeCategory<?> category, ResourceLocation entryId) {
+        // JEI-enumerated entries live in the bridge's map keyed by the synthetic cogwheel_jei id.
+        Object jeiSourced = JeiBridge.lookupJeiSourcedRecipe(entryId);
+        if (jeiSourced != null && category.getRecipeType().getRecipeClass().isInstance(jeiSourced)) {
+            return jeiSourced;
+        }
+        // Cogwheel category-alias mirrors (e.g. create:item_application surfaced under create:deploying)
+        // store the original recipe id in RebuildTrigger; resolve the underlying RecipeHolder so JEI
+        // draws the recipe inside the aliased category's visual.
+        ResourceLocation aliasedOriginal = dev.kima.cogwheel.recipe.source.RebuildTrigger.getMirrorOriginal(entryId);
+        ResourceLocation lookupId = aliasedOriginal != null ? aliasedOriginal : entryId;
         var mc = Minecraft.getInstance();
         if (mc.level != null) {
-            var holder = mc.level.getRecipeManager().byKey(entryId);
+            var holder = mc.level.getRecipeManager().byKey(lookupId);
             if (holder.isPresent()) {
                 Object value = holder.get();
-                // JEI's RecipeType for vanilla recipes uses RecipeHolder<X> as T, so passing the
-                // holder itself is correct.
                 if (category.getRecipeType().getRecipeClass().isInstance(value)) {
                     return value;
                 }
             }
         }
-        // Fallback for JEI virtual recipes (brewing, anvil): scan category's lookup for matching UID.
+        // Last resort for JEI virtual recipes that aren't in our bridge map: scan by getUid().
         return scanCategoryForUid(rm, category, entryId);
     }
 

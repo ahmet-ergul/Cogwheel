@@ -27,6 +27,8 @@ public final class FactoriesPage implements LeftPanelPage {
     private static final int PADDING = 6;
     private static final int FOOTER_HEIGHT = 14;
     private static final int BUTTON_SIZE = 14;
+    /** Height of the Refresh + Open Folder strip at the bottom of the page. */
+    private static final int ACTION_BAR_HEIGHT = 22;
 
     private static final int BG_HOVER = 0xFF2A3148;
     private static final int BG_CURRENT = 0xFF3A4868;
@@ -61,7 +63,11 @@ public final class FactoriesPage implements LeftPanelPage {
     }
 
     private int listH() {
-        return height - ROW_HEIGHT - PADDING - FOOTER_HEIGHT; // - "+ New" row - bottom counter
+        return height - ROW_HEIGHT - PADDING - ACTION_BAR_HEIGHT - FOOTER_HEIGHT;
+    }
+
+    private int actionBarY() {
+        return y + height - FOOTER_HEIGHT - ACTION_BAR_HEIGHT;
     }
 
     @Override
@@ -119,11 +125,30 @@ public final class FactoriesPage implements LeftPanelPage {
             graphics.fill(x + width - 4, barY, x + width - 1, barY + barH, BUTTON_HOVER);
         }
 
+        // Action bar: Refresh + Open folder.
+        int abY = actionBarY();
+        graphics.fill(x, abY - 1, x + width, abY, BORDER);
+        int btnH = ACTION_BAR_HEIGHT - 6;
+        int halfW = (width - PADDING * 3) / 2;
+        int refreshX = x + PADDING;
+        int openX = refreshX + halfW + PADDING;
+        int btnY = abY + 3;
+        drawActionButton(graphics, font, refreshX, btnY, halfW, btnH, "Refresh", mouseX, mouseY);
+        drawActionButton(graphics, font, openX, btnY, halfW, btnH, "Open folder", mouseX, mouseY);
+
         // Footer count.
         int footerY = y + height - FOOTER_HEIGHT + 2;
         graphics.fill(x, footerY - 2, x + width, footerY - 1, BORDER);
         graphics.drawString(font, Component.literal(all.size() + " factories"),
                 x + PADDING, footerY + 2, TEXT_DIM, false);
+    }
+
+    private void drawActionButton(GuiGraphics graphics, Font font, int bx, int by, int bw, int bh,
+                                  String label, int mouseX, int mouseY) {
+        boolean hover = mouseX >= bx && mouseX <= bx + bw && mouseY >= by && mouseY < by + bh;
+        graphics.fill(bx, by, bx + bw, by + bh, hover ? BUTTON_HOVER : BG_HOVER);
+        int tw = font.width(label);
+        graphics.drawString(font, label, bx + (bw - tw) / 2, by + (bh - 8) / 2, TEXT, false);
     }
 
     private boolean inRow(double mouseX, double mouseY, int rowY) {
@@ -140,6 +165,25 @@ public final class FactoriesPage implements LeftPanelPage {
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (button != 0) return false;
+
+        // Action bar buttons.
+        int abY = actionBarY();
+        if (mouseY >= abY && mouseY < abY + ACTION_BAR_HEIGHT) {
+            int btnH = ACTION_BAR_HEIGHT - 6;
+            int halfW = (width - PADDING * 3) / 2;
+            int refreshX = x + PADDING;
+            int openX = refreshX + halfW + PADDING;
+            int btnY = abY + 3;
+            if (mouseX >= refreshX && mouseX < refreshX + halfW && mouseY >= btnY && mouseY < btnY + btnH) {
+                callbacks.onRefreshFactories().run();
+                return true;
+            }
+            if (mouseX >= openX && mouseX < openX + halfW && mouseY >= btnY && mouseY < btnY + btnH) {
+                callbacks.onOpenFactoriesFolder().run();
+                return true;
+            }
+            return true;
+        }
 
         // "+ New factory" pinned row.
         int newRowY = y + PADDING;
