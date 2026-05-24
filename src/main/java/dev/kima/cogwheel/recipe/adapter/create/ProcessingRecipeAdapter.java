@@ -1,5 +1,6 @@
 package dev.kima.cogwheel.recipe.adapter.create;
 
+import com.simibubi.create.content.processing.recipe.HeatCondition;
 import com.simibubi.create.content.processing.recipe.ProcessingOutput;
 import com.simibubi.create.content.processing.recipe.ProcessingRecipe;
 import dev.kima.cogwheel.recipe.FluidIngredientStack;
@@ -71,12 +72,17 @@ public final class ProcessingRecipeAdapter implements RecipeAdapter {
         Optional<FluidIngredientStack> inputFluid = firstFluidInput(processing.getFluidIngredients());
         Optional<FluidStack> outputFluid = firstFluidOutput(processing.getFluidResults());
 
+        HeatCondition heat = processing.getRequiredHeat();
+        Optional<String> heatStr = (heat == null || heat == HeatCondition.NONE)
+                ? Optional.empty() : Optional.of(heat.name());
+
         return Optional.of(new RecipeEntry(
                 id, typeId,
                 inputs, outputs,
                 inputFluid, outputFluid,
                 processing.getProcessingDuration(),
-                Optional.empty()));
+                Optional.empty(),
+                heatStr));
     }
 
     private static Optional<FluidIngredientStack> firstFluidInput(NonNullList<SizedFluidIngredient> ingredients) {

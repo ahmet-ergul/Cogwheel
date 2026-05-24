@@ -30,5 +30,16 @@ public record RecipeEntry(
         Optional<FluidIngredientStack> inputFluid,
         Optional<FluidStack> outputFluid,
         int processingTimeTicks,
-        Optional<Component> displayName
-) {}
+        Optional<Component> displayName,
+        /** Extra in-world requirement (e.g. "HEATED", "SUPERHEATED" for Create mixing). Empty when
+         *  the recipe has no positional/environmental requirement. */
+        Optional<String> heatRequirement
+) {
+    /** Back-compat constructor — old call sites that don't know about heat. */
+    public RecipeEntry(ResourceLocation id, ResourceLocation typeId,
+                       List<IngredientStack> inputs, List<ItemStack> outputs,
+                       Optional<FluidIngredientStack> inputFluid, Optional<FluidStack> outputFluid,
+                       int processingTimeTicks, Optional<Component> displayName) {
+        this(id, typeId, inputs, outputs, inputFluid, outputFluid, processingTimeTicks, displayName, Optional.empty());
+    }
+}

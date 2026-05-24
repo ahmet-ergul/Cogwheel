@@ -36,6 +36,8 @@ public final class NodeRenderer {
     public static final int HEADER_BG_TOP    = 0xFF323A55;
     public static final int HEADER_BG_BOTTOM = 0xFF272D42;
     public static final int HEADER_SEP  = 0xFF1A1E2A;
+    public static final int HEAT_HEATED      = 0xFFE8A040; // orange — Create "heated" condition
+    public static final int HEAT_SUPERHEATED = 0xFFE85040; // red — Create "superheated" condition
     public static final int SHADOW      = 0x40000000; // 25% black drop shadow
     public static final int PORT_ITEM   = 0xFFE8B86E;
     public static final int PORT_ITEM_RING = 0xFF9A7842;
@@ -105,6 +107,13 @@ public final class NodeRenderer {
         // Resolve the recipe entry once for count-badge lookup. Null for non-RecipeNodes or when
         // the index doesn't have the recipe (mod removed, pre-rebuild, etc.) — falls back to no badge.
         RecipeEntry entry = (index != null && node instanceof RecipeNode rn) ? index.byId(rn.recipeId()) : null;
+
+        // Heat stripe — colored bar replacing the header separator when the recipe needs heat.
+        if (entry != null && entry.heatRequirement().isPresent()) {
+            int heatColor = "SUPERHEATED".equals(entry.heatRequirement().get())
+                    ? HEAT_SUPERHEATED : HEAT_HEATED;
+            graphics.fill(x + 1, y + HEADER_HEIGHT - 1, x + w - 1, y + HEADER_HEIGHT + 1, heatColor);
+        }
 
         // Input ports (left side). Use the resolver's effective display so wildcard ports
         // (Splitter/Merger) show whatever's flowing through them.
