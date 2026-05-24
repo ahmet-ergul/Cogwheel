@@ -13,6 +13,8 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.crafting.RecipeHolder;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -85,13 +87,27 @@ final class JeiPickerRenderer {
 
             IRecipeLayoutDrawable<?> drawable = DRAWABLE_CACHE.get(entryId);
             if (drawable == null) {
-                CategoryAndRecipe pair = resolveCategoryAndRecipe(rm, typeId, entryId);
-                if (pair == null) return false;
-                Optional<? extends IRecipeLayoutDrawable<?>> drawableOpt =
-                        createDrawable(runtime, rm, pair.category(), pair.recipe());
-                if (drawableOpt.isEmpty()) return false;
-                drawable = drawableOpt.get();
-                DRAWABLE_CACHE.put(entryId, drawable);
+                for (CategoryAndRecipe pair : resolveCandidates(rm, typeId, entryId)) {
+                    Optional<? extends IRecipeLayoutDrawable<?>> drawableOpt;
+                    try {
+                        drawableOpt = createDrawable(runtime, rm, pair.category(), pair.recipe());
+                    } catch (Throwable t) {
+                        // Some categories (Create's DeployingCategory) hard-cast incompatible recipe
+                        // classes and throw past JEI's catch. Record the (category, recipe) pair so
+                        // we stop retrying on subsequent renders and quietly fall back.
+                        blacklist(pair.category(), pair.recipe());
+                        continue;
+                    }
+                    if (drawableOpt.isPresent()) {
+                        drawable = drawableOpt.get();
+                        DRAWABLE_CACHE.put(entryId, drawable);
+                        break;
+                    } else {
+                        // JEI's catch handled it; still denylist so we don't keep re-trying.
+                        blacklist(pair.category(), pair.recipe());
+                    }
+                }
+                if (drawable == null) return false;
             }
             // Advance the cycle so tag-backed ingredients actually rotate at JEI's natural pace.
             maybeTickAll();
@@ -137,15 +153,35 @@ final class JeiPickerRenderer {
     record CategoryAndRecipe(IRecipeCategory<?> category, Object recipe) {}
 
     /**
-     * Resolve the right (category, recipe) to render for this entry. Most entries: category from
-     * the entry's typeId, recipe via {@link #findRecipeInstance}. Mirror entries override the
-     * category to match the UNDERLYING recipe's actual MC RecipeType — JEI's drawable construction
-     * casts the recipe to the category's expected class, so e.g. an item_application recipe under
-     * the deploying category UID would crash. We render mirrors using the original recipe's actual
-     * category (so brass-casing-via-deployer shows the item_application JEI card rather than
-     * fallback art).
+     * Resolve the right (category, recipe) to render for this entry.
+     *
+     * <p>Most entries: category from the entry's typeId, recipe via {@link #findRecipeInstance}.
+     *
+     * <p>Mirror entries: we WANT to render through the mirror's category (e.g. {@code create:deploying}
+     * for a {@code create:item_application} recipe surfaced under Deploying) so the user sees the
+     * Deployer machine visual that JEI shows in its own Deploying tab — Create's JEI plugin
+     * accepts both DeployingRecipe and ItemApplicationRecipe in that category. We deliberately skip
+     * the {@code isInstance} check and let JEI's {@code createRecipeLayoutDrawable} either accept
+     * the recipe (we get the right card) or return {@code Optional.empty()} (caller falls back to
+     * the original category, then to plain art).
      */
-    static CategoryAndRecipe resolveCategoryAndRecipe(IRecipeManager rm, ResourceLocation typeId, ResourceLocation entryId) {
+    /**
+     * Ordered list of (category, recipe) attempts. Caller tries each until one produces a drawable.
+     *
+     * <p>Mirror entries (Cogwheel-synthesized aliases like {@code cogwheel_mirror:deploying/...})
+     * render through the UNDERLYING recipe's actual MC RecipeType — Create's {@code DeployingCategory}
+     * hard-casts to {@code DeployerApplicationRecipe} and crashes on a {@code ManualApplicationRecipe}
+     * passed under the deploying UID. The trade-off: brass-casing-via-deployer shows the
+     * item-application card (no Deployer machine), but no error spam. To see the full Deployer
+     * visual, right-click the row → JEI opens its own Deploying tab.
+     *
+     * <p>The DENYLIST below records (categoryUid, recipeClass) pairs that failed once so we don't
+     * spam JEI's error log on subsequent renders of the same recipe.
+     */
+    private static final java.util.Set<String> DENYLIST = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    static List<CategoryAndRecipe> resolveCandidates(IRecipeManager rm, ResourceLocation typeId, ResourceLocation entryId) {
+        List<CategoryAndRecipe> out = new ArrayList<>(2);
         ResourceLocation aliasedOriginal =
                 dev.kima.cogwheel.recipe.source.RebuildTrigger.getMirrorOriginal(entryId);
         if (aliasedOriginal != null) {
@@ -154,21 +190,49 @@ final class JeiPickerRenderer {
                 var holder = mc.level.getRecipeManager().byKey(aliasedOriginal);
                 if (holder.isPresent()) {
                     RecipeHolder<?> rh = holder.get();
+                    // First candidate (deployer-machine card): if Create is loaded and the alias
+                    // is create:deploying, use Create's own asDeploying() converter to produce a
+                    // RecipeHolder<DeployerApplicationRecipe> that the deploying category accepts.
+                    if (net.neoforged.fml.ModList.get().isLoaded("create")
+                            && "create".equals(typeId.getNamespace())
+                            && "deploying".equals(typeId.getPath())) {
+                        Object wrapped = dev.kima.cogwheel.recipe.adapter.create
+                                .CreateDeployerJeiWrapper.wrapManualAsDeploying(rh);
+                        if (wrapped != null) {
+                            IRecipeCategory<?> deployingCat = findCategoryByUid(rm, typeId);
+                            if (deployingCat != null) {
+                                out.add(new CategoryAndRecipe(deployingCat, wrapped));
+                            }
+                        }
+                    }
+                    // Fallback (no machine visual but always works): the recipe's actual MC category.
                     ResourceLocation actualType = BuiltInRegistries.RECIPE_TYPE.getKey(rh.value().getType());
                     if (actualType != null) {
-                        IRecipeCategory<?> cat = findCategoryByUid(rm, actualType);
-                        if (cat != null && cat.getRecipeType().getRecipeClass().isInstance(rh)) {
-                            return new CategoryAndRecipe(cat, rh);
+                        IRecipeCategory<?> actualCat = findCategoryByUid(rm, actualType);
+                        if (actualCat != null) {
+                            out.add(new CategoryAndRecipe(actualCat, rh));
                         }
                     }
                 }
             }
+            return out;
         }
         IRecipeCategory<?> category = findCategoryByUid(rm, typeId);
-        if (category == null) return null;
+        if (category == null) return out;
         Object recipe = findRecipeInstance(rm, category, entryId);
-        if (recipe == null) return null;
-        return new CategoryAndRecipe(category, recipe);
+        if (recipe == null) return out;
+        if (DENYLIST.contains(denylistKey(category, recipe))) return out;
+        out.add(new CategoryAndRecipe(category, recipe));
+        return out;
+    }
+
+    private static String denylistKey(IRecipeCategory<?> category, Object recipe) {
+        Object inner = recipe instanceof RecipeHolder<?> h ? h.value() : recipe;
+        return category.getRecipeType().getUid() + "::" + inner.getClass().getName();
+    }
+
+    static void blacklist(IRecipeCategory<?> category, Object recipe) {
+        DENYLIST.add(denylistKey(category, recipe));
     }
 
     private static IRecipeCategory<?> findCategoryByUid(IRecipeManager rm, ResourceLocation typeUid) {
