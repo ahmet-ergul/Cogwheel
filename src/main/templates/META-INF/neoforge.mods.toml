@@ -36,10 +36,12 @@ description='''${mod_description}'''
     ordering="AFTER"
     side="CLIENT"
 
-# JEI is OPTIONAL: when present, brewing/anvil/fuel/composter virtual recipes are added to the index.
+# JEI is REQUIRED — Cogwheel's recipe discovery walks JEI's category lookup, and the recipe
+# picker / properties panel rely on JEI to render recipe cards. Without JEI the editor would
+# be unusable.
 [[dependencies.${mod_id}]]
     modId="jei"
-    type="optional"
+    type="required"
     versionRange="[19.27.0,)"
     ordering="AFTER"
     side="CLIENT"

@@ -389,6 +389,7 @@ public class EditorScreen extends Screen {
         }
         if (button == LEFT_MOUSE_BUTTON) {
             Vec2 world = canvas.screenToWorld(mouseX, mouseY);
+            boolean ctrl = hasControlDown();
 
             // Priority: ports → nodes → background. Edges + right-click handled separately.
             Optional<HitTest.PortHit> portHit = HitTest.portAt(design, world.x(), world.y(), PORT_HIT_RADIUS);
@@ -405,10 +406,18 @@ public class EditorScreen extends Screen {
                         && (now - lastClickedAt) < DOUBLE_CLICK_MS;
                 lastClickedNodeId = node.id();
                 lastClickedAt = now;
-                canvas.setSelectedNodeId(node.id());
+                if (ctrl) {
+                    canvas.toggleSelection(node.id());
+                    return true;
+                }
+                // If the clicked node is already in a multi-selection, don't collapse: prepare
+                // for a group drag. Otherwise replace the selection with this node.
+                if (!canvas.isSelected(node.id())) {
+                    canvas.setSelectedNodeId(node.id());
+                }
                 if (isDoubleClick) {
                     editingNodeId = node.id();
-                    return true; // don't start a drag on the second click
+                    return true;
                 }
                 canvas.startNodeDrag(node.id(), node.position(), world.x(), world.y());
                 return true;
@@ -419,8 +428,9 @@ public class EditorScreen extends Screen {
                 canvas.setSelectedEdge(edgeHit.get());
                 return true;
             }
-            // Click on empty canvas clears selection.
-            canvas.clearSelection();
+            // Empty canvas: clear selection (unless Ctrl preserves it) and start a marquee.
+            if (!ctrl) canvas.clearSelection();
+            canvas.startSelectionRect(world.x(), world.y());
             return true;
         }
         if (button == RIGHT_MOUSE_BUTTON) {
@@ -428,27 +438,46 @@ public class EditorScreen extends Screen {
             Optional<Node> nodeHit = HitTest.nodeAt(design, world.x(), world.y());
             if (nodeHit.isPresent()) {
                 Node node = nodeHit.get();
+                // If the right-clicked node isn't part of an existing multi-selection, treat
+                // this as a single-node action: select just it.
+                if (!canvas.isSelected(node.id())) canvas.setSelectedNodeId(node.id());
+                boolean multi = canvas.selectedNodes().size() > 1;
                 List<ContextMenu.Option> opts = new java.util.ArrayList<>();
-                opts.add(new ContextMenu.Option("Edit", () -> {
-                    canvas.setSelectedNodeId(node.id());
-                    editingNodeId = node.id();
+                if (!multi) {
+                    opts.add(new ContextMenu.Option("Edit", () -> {
+                        canvas.setSelectedNodeId(node.id());
+                        editingNodeId = node.id();
+                    }));
+                }
+                opts.add(new ContextMenu.Option(multi ? "Clone all" : "Clone", () -> {
+                    Design updated = design;
+                    java.util.List<UUID> newIds = new java.util.ArrayList<>();
+                    for (UUID id : canvas.selectedNodes()) {
+                        Node src = updated.findNode(id);
+                        if (src == null) continue;
+                        Node copy = cloneNodeAtOffset(src, 24, 24);
+                        updated = updated.withNodeAdded(copy);
+                        newIds.add(copy.id());
+                    }
+                    setDesign(updated);
+                    canvas.clearSelection();
+                    for (UUID id : newIds) canvas.addToSelection(id);
                 }));
-                opts.add(new ContextMenu.Option("Clone", () -> {
-                    Node copy = cloneNodeAtOffset(node, 24, 24);
-                    setDesign(design.withNodeAdded(copy));
-                    canvas.setSelectedNodeId(copy.id());
-                }));
-                if (node instanceof RecipeNode rn && JeiBridge.getRuntime() != null) {
+                if (!multi && node instanceof RecipeNode rn && JeiBridge.getRuntime() != null) {
                     RecipeEntry entry = RebuildTrigger.index().byId(rn.recipeId());
                     if (entry != null) {
                         opts.add(new ContextMenu.Option("View in JEI",
                                 () -> JeiBridge.showRecipeInJei(entry.typeId(), entry.id())));
                     }
                 }
-                opts.add(new ContextMenu.Option("Delete", () -> {
-                    setDesign(design.withNodeRemoved(node.id()));
-                    if (node.id().equals(canvas.selectedNodeId())) canvas.clearSelection();
-                    if (node.id().equals(editingNodeId)) editingNodeId = null;
+                opts.add(new ContextMenu.Option(multi ? "Delete all" : "Delete", () -> {
+                    Design updated = design;
+                    for (UUID id : canvas.selectedNodes()) {
+                        updated = updated.withNodeRemoved(id);
+                        if (id.equals(editingNodeId)) editingNodeId = null;
+                    }
+                    setDesign(updated);
+                    canvas.clearSelection();
                 }));
                 contextMenu.show((int) mouseX, (int) mouseY, opts);
                 return true;
@@ -490,6 +519,27 @@ public class EditorScreen extends Screen {
                 canvas.endEdgeDrag();
                 return true;
             }
+            if (canvas.isDrawingSelectionRect()) {
+                // Finalize marquee: add every node whose top-left corner OR bottom-right falls
+                // within the rectangle to the selection set.
+                Vec2 s = canvas.selectionRectStart();
+                Vec2 e = canvas.selectionRectEnd();
+                double x1 = Math.min(s.x(), e.x());
+                double y1 = Math.min(s.y(), e.y());
+                double x2 = Math.max(s.x(), e.x());
+                double y2 = Math.max(s.y(), e.y());
+                for (Node n : design.nodes()) {
+                    int w = dev.kima.cogwheel.client.ui.canvas.NodeRenderer.NODE_WIDTH;
+                    int h = dev.kima.cogwheel.client.ui.canvas.NodeRenderer.heightOf(n);
+                    double nx = n.position().x();
+                    double ny = n.position().y();
+                    if (nx + w >= x1 && nx <= x2 && ny + h >= y1 && ny <= y2) {
+                        canvas.addToSelection(n.id());
+                    }
+                }
+                canvas.endSelectionRect();
+                return true;
+            }
             canvas.endNodeDrag();
             return true;
         }
@@ -512,9 +562,29 @@ public class EditorScreen extends Screen {
                 canvas.updatePendingEdge(world.x(), world.y());
                 return true;
             }
+            if (canvas.isDrawingSelectionRect()) {
+                canvas.updateSelectionRect(world.x(), world.y());
+                return true;
+            }
             if (canvas.draggingNodeId() != null) {
-                Vec2 newPos = canvas.currentDragTarget(world.x(), world.y());
-                setDesign(design.withNodeMoved(canvas.draggingNodeId(), newPos));
+                // Multi-node drag: move all selected nodes by the same world-space delta. Single
+                // selection uses the absolute-position math so the cursor stays anchored to the
+                // grabbed node exactly.
+                if (canvas.selectedNodes().size() > 1 && canvas.isSelected(canvas.draggingNodeId())) {
+                    double dxWorld = dragX / canvas.zoom();
+                    double dyWorld = dragY / canvas.zoom();
+                    Design updated = design;
+                    for (UUID id : canvas.selectedNodes()) {
+                        Node n = updated.findNode(id);
+                        if (n == null) continue;
+                        updated = updated.withNodeMoved(id,
+                                new Vec2(n.position().x() + dxWorld, n.position().y() + dyWorld));
+                    }
+                    setDesign(updated);
+                } else {
+                    Vec2 newPos = canvas.currentDragTarget(world.x(), world.y());
+                    setDesign(design.withNodeMoved(canvas.draggingNodeId(), newPos));
+                }
                 return true;
             }
         }
@@ -699,11 +769,14 @@ public class EditorScreen extends Screen {
                 canvas.setSelectedEdge(null);
                 return true;
             }
-            UUID sNode = canvas.selectedNodeId();
-            if (sNode != null) {
-                setDesign(design.withNodeRemoved(sNode));
+            if (!canvas.selectedNodes().isEmpty()) {
+                Design updated = design;
+                for (UUID id : canvas.selectedNodes()) {
+                    updated = updated.withNodeRemoved(id);
+                    if (id.equals(editingNodeId)) editingNodeId = null;
+                }
+                setDesign(updated);
                 canvas.clearSelection();
-                if (sNode.equals(editingNodeId)) editingNodeId = null;
                 return true;
             }
             return false;

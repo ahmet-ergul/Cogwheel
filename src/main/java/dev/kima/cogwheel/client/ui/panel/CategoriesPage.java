@@ -17,7 +17,12 @@ import java.util.List;
  */
 public final class CategoriesPage implements LeftPanelPage {
 
-    public record Category(ItemStack icon, Component label, Component subtitle, boolean enabled, Runnable onClick) {}
+    public record Category(ItemStack icon, Component label, Component subtitle, boolean enabled,
+                            boolean separatorAbove, Runnable onClick) {
+        public Category(ItemStack icon, Component label, Component subtitle, boolean enabled, Runnable onClick) {
+            this(icon, label, subtitle, enabled, false, onClick);
+        }
+    }
 
     private static final int ROW_HEIGHT = 28;
     private static final int PADDING = 6;
@@ -25,6 +30,7 @@ public final class CategoriesPage implements LeftPanelPage {
     private static final int TEXT = 0xFFEAEAEA;
     private static final int TEXT_DIM = 0xFFA8A8B8;
     private static final int TEXT_DISABLED = 0xFF5A6075;
+    private static final int DIVIDER = 0xFF2A3148;
 
     private final Component title;
     private final List<Category> categories;
@@ -56,6 +62,11 @@ public final class CategoriesPage implements LeftPanelPage {
         Font font = Minecraft.getInstance().font;
         int rowY = y + PADDING;
         for (Category cat : categories) {
+            if (cat.separatorAbove()) {
+                rowY += 4;
+                graphics.fill(x + PADDING, rowY - 3, x + width - PADDING, rowY - 2, DIVIDER);
+                rowY += 2;
+            }
             boolean hover = cat.enabled() && mouseX >= x && mouseX <= x + width
                     && mouseY >= rowY && mouseY < rowY + ROW_HEIGHT;
             if (hover) {
@@ -68,7 +79,6 @@ public final class CategoriesPage implements LeftPanelPage {
             graphics.drawString(font, cat.label(), x + PADDING + 22, rowY + 5, labelColor, false);
             graphics.drawString(font, cat.subtitle(), x + PADDING + 22, rowY + 16,
                     cat.enabled() ? TEXT_DIM : TEXT_DISABLED, false);
-            // Right-side chevron for enabled rows.
             if (cat.enabled()) {
                 graphics.drawString(font, "›", x + width - 14, rowY + 10, TEXT_DIM, false);
             }
@@ -81,11 +91,10 @@ public final class CategoriesPage implements LeftPanelPage {
         if (button != 0) return false;
         int rowY = y + PADDING;
         for (Category cat : categories) {
+            if (cat.separatorAbove()) rowY += 6;
             if (mouseY >= rowY && mouseY < rowY + ROW_HEIGHT
                     && mouseX >= x && mouseX <= x + width) {
-                if (cat.enabled()) {
-                    cat.onClick().run();
-                }
+                if (cat.enabled()) cat.onClick().run();
                 return true;
             }
             rowY += ROW_HEIGHT;

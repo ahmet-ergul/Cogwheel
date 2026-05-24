@@ -14,6 +14,7 @@ import dev.kima.cogwheel.model.RecipeNode;
 import dev.kima.cogwheel.model.SinkNode;
 import dev.kima.cogwheel.model.SourceNode;
 import dev.kima.cogwheel.model.SplitterNode;
+import dev.kima.cogwheel.integration.jei.JeiBridge;
 import dev.kima.cogwheel.recipe.IngredientStack;
 import dev.kima.cogwheel.recipe.RecipeEntry;
 import dev.kima.cogwheel.recipe.RecipeIndex;
@@ -189,6 +190,14 @@ public final class PropertiesPanel {
                 panelX + PADDING, hintY + ROW_HEIGHT, TEXT_DIM, false);
     }
 
+    /** Vertical space the JEI preview occupies above the rest of the RecipeNode props. */
+    private int recipePreviewOffset(RecipeNode rn) {
+        if (indexSupplier == null) return 0;
+        RecipeIndex idx = indexSupplier.get();
+        if (idx == null || idx.byId(rn.recipeId()) == null) return 0;
+        return 72 + PADDING;
+    }
+
     private String formatRate(double v) {
         if (v >= 1000) return String.format("%.1fk", v / 1000);
         if (v >= 100) return String.format("%.0f", v);
@@ -255,6 +264,23 @@ public final class PropertiesPanel {
     }
 
     private void renderRecipe(GuiGraphics graphics, Font font, RecipeNode rn, int y, int mouseX, int mouseY) {
+        // JEI card preview at the top: shows the recipe in JEI's native rendering for context.
+        RecipeEntry entry = indexSupplier != null && indexSupplier.get() != null
+                ? indexSupplier.get().byId(rn.recipeId()) : null;
+        if (entry != null) {
+            int previewH = 72;
+            int previewX = panelX + PADDING;
+            int previewY = y;
+            int previewW = WIDTH - PADDING * 2;
+            graphics.fill(previewX, previewY, previewX + previewW, previewY + previewH, 0xFF1A1E2A);
+            graphics.fill(previewX, previewY, previewX + previewW, previewY + 1, BORDER);
+            graphics.fill(previewX, previewY + previewH - 1, previewX + previewW, previewY + previewH, BORDER);
+            graphics.fill(previewX, previewY, previewX + 1, previewY + previewH, BORDER);
+            graphics.fill(previewX + previewW - 1, previewY, previewX + previewW, previewY + previewH, BORDER);
+            JeiBridge.tryRenderPickerRow(graphics, entry.id(), entry.typeId(),
+                    previewX, previewY, previewW, previewH, mouseX, mouseY);
+            y += previewH + PADDING;
+        }
         graphics.drawString(font, "Parallelism: " + rn.parallelism(),
                 panelX + PADDING, y, TEXT, false);
         int sliderY = y + ROW_HEIGHT;
@@ -405,7 +431,9 @@ public final class PropertiesPanel {
                 return true;
             }
         } else if (selected instanceof RecipeNode rn) {
-            int sliderY = contentY + ROW_HEIGHT;
+            int previewOffset = recipePreviewOffset(rn);
+            int rContentY = contentY + previewOffset;
+            int sliderY = rContentY + ROW_HEIGHT;
             if (hits(sx, sy, panelX + PADDING, sliderY, WIDTH - PADDING * 2, SLIDER_HEIGHT)) {
                 draggingSlider = true;
                 applySliderDrag(sx);

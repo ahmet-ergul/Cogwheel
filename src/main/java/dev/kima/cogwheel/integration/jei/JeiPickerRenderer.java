@@ -9,9 +9,13 @@ import mezz.jei.api.runtime.IJeiRuntime;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.renderer.Rect2i;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.crafting.RecipeHolder;
 
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Tries to render a single picker row using JEI's own {@link IRecipeCategory#draw} via
@@ -29,6 +33,46 @@ final class JeiPickerRenderer {
     /** Padding inside the row when drawing the JEI layout. */
     private static final int PADDING = 4;
 
+    /** Drawables are surprisingly expensive to construct (each one allocates a fresh
+     *  {@code CycleTicker} with a NEW random offset), so re-creating per frame makes JEI's tag
+     *  ingredient cycling visibly stutter — the displayed item snaps to a new random alternate
+     *  every frame instead of cycling once per second. We cache by entry id and rebuild only on
+     *  JEI runtime change (handled via {@link #clearCache}). */
+    private static final Map<ResourceLocation, IRecipeLayoutDrawable<?>> DRAWABLE_CACHE = new ConcurrentHashMap<>();
+
+    /** JEI's {@code RecipeLayout.tick()} is the per-tick hook that advances {@code CycleTicker}.
+     *  The interface doesn't expose it, so we reflect. ~20 Hz matches a vanilla game tick. */
+    private static long lastTickMs = 0;
+    private static java.lang.reflect.Method cachedTickMethod;
+
+    static void clearCache() {
+        DRAWABLE_CACHE.clear();
+    }
+
+    /**
+     * Tick every cached drawable at ~20 Hz so its internal {@code CycleTicker} advances. Called
+     * from {@link #tryRender} on every frame; the rate limiter keeps us honest.
+     */
+    private static void maybeTickAll() {
+        long now = System.currentTimeMillis();
+        if (now - lastTickMs < 50) return; // 20 Hz = once per game tick
+        lastTickMs = now;
+        for (IRecipeLayoutDrawable<?> drawable : DRAWABLE_CACHE.values()) {
+            try {
+                if (cachedTickMethod == null
+                        || !cachedTickMethod.getDeclaringClass().isInstance(drawable)) {
+                    cachedTickMethod = drawable.getClass().getMethod("tick");
+                }
+                cachedTickMethod.invoke(drawable);
+            } catch (ReflectiveOperationException e) {
+                // tick() isn't where we expect — give up on ticking but keep the cache so we don't
+                // hammer reflection every frame.
+                cachedTickMethod = null;
+                return;
+            }
+        }
+    }
+
     private JeiPickerRenderer() {}
 
     static boolean tryRender(GuiGraphics graphics, Object runtimeObj,
@@ -39,16 +83,18 @@ final class JeiPickerRenderer {
             IJeiRuntime runtime = (IJeiRuntime) runtimeObj;
             IRecipeManager rm = runtime.getRecipeManager();
 
-            IRecipeCategory<?> category = findCategoryByUid(rm, typeId);
-            if (category == null) return false;
-
-            Object recipeInstance = findRecipeInstance(rm, category, entryId);
-            if (recipeInstance == null) return false;
-
-            Optional<? extends IRecipeLayoutDrawable<?>> drawableOpt =
-                    createDrawable(runtime, rm, category, recipeInstance);
-            if (drawableOpt.isEmpty()) return false;
-            IRecipeLayoutDrawable<?> drawable = drawableOpt.get();
+            IRecipeLayoutDrawable<?> drawable = DRAWABLE_CACHE.get(entryId);
+            if (drawable == null) {
+                CategoryAndRecipe pair = resolveCategoryAndRecipe(rm, typeId, entryId);
+                if (pair == null) return false;
+                Optional<? extends IRecipeLayoutDrawable<?>> drawableOpt =
+                        createDrawable(runtime, rm, pair.category(), pair.recipe());
+                if (drawableOpt.isEmpty()) return false;
+                drawable = drawableOpt.get();
+                DRAWABLE_CACHE.put(entryId, drawable);
+            }
+            // Advance the cycle so tag-backed ingredients actually rotate at JEI's natural pace.
+            maybeTickAll();
 
             Rect2i rect = drawable.getRect();
             int natW = Math.max(1, rect.getWidth());
@@ -85,6 +131,44 @@ final class JeiPickerRenderer {
                     entryId, typeId, t.toString());
             return false;
         }
+    }
+
+    /** Together: a JEI category whose recipe class accepts the recipe instance, ready to render. */
+    record CategoryAndRecipe(IRecipeCategory<?> category, Object recipe) {}
+
+    /**
+     * Resolve the right (category, recipe) to render for this entry. Most entries: category from
+     * the entry's typeId, recipe via {@link #findRecipeInstance}. Mirror entries override the
+     * category to match the UNDERLYING recipe's actual MC RecipeType — JEI's drawable construction
+     * casts the recipe to the category's expected class, so e.g. an item_application recipe under
+     * the deploying category UID would crash. We render mirrors using the original recipe's actual
+     * category (so brass-casing-via-deployer shows the item_application JEI card rather than
+     * fallback art).
+     */
+    static CategoryAndRecipe resolveCategoryAndRecipe(IRecipeManager rm, ResourceLocation typeId, ResourceLocation entryId) {
+        ResourceLocation aliasedOriginal =
+                dev.kima.cogwheel.recipe.source.RebuildTrigger.getMirrorOriginal(entryId);
+        if (aliasedOriginal != null) {
+            var mc = Minecraft.getInstance();
+            if (mc.level != null) {
+                var holder = mc.level.getRecipeManager().byKey(aliasedOriginal);
+                if (holder.isPresent()) {
+                    RecipeHolder<?> rh = holder.get();
+                    ResourceLocation actualType = BuiltInRegistries.RECIPE_TYPE.getKey(rh.value().getType());
+                    if (actualType != null) {
+                        IRecipeCategory<?> cat = findCategoryByUid(rm, actualType);
+                        if (cat != null && cat.getRecipeType().getRecipeClass().isInstance(rh)) {
+                            return new CategoryAndRecipe(cat, rh);
+                        }
+                    }
+                }
+            }
+        }
+        IRecipeCategory<?> category = findCategoryByUid(rm, typeId);
+        if (category == null) return null;
+        Object recipe = findRecipeInstance(rm, category, entryId);
+        if (recipe == null) return null;
+        return new CategoryAndRecipe(category, recipe);
     }
 
     private static IRecipeCategory<?> findCategoryByUid(IRecipeManager rm, ResourceLocation typeUid) {

@@ -28,12 +28,19 @@ public final class NodeRenderer {
     private static final float CONTENT_SCALE = 0.8f;
     private static final int ICON_PX = Math.round(16 * CONTENT_SCALE);
 
-    public static final int BG_COLOR    = 0xEE1F2233;
-    public static final int BORDER      = 0xFF54607A;
+    public static final int BG_COLOR    = 0xF21F2233;
+    public static final int BG_DEEP     = 0xF21A1E2A; // slightly darker body bottom for depth
+    public static final int BORDER      = 0xFF4A556E;
     public static final int BORDER_SELECTED = 0xFFFFCC55;
-    public static final int HEADER_BG   = 0xFF2A3148;
+    public static final int GLOW_SELECTED = 0x66FFCC55; // soft outer halo when selected
+    public static final int HEADER_BG_TOP    = 0xFF323A55;
+    public static final int HEADER_BG_BOTTOM = 0xFF272D42;
+    public static final int HEADER_SEP  = 0xFF1A1E2A;
+    public static final int SHADOW      = 0x40000000; // 25% black drop shadow
     public static final int PORT_ITEM   = 0xFFE8B86E;
+    public static final int PORT_ITEM_RING = 0xFF9A7842;
     public static final int PORT_FLUID  = 0xFF6EBBE8;
+    public static final int PORT_FLUID_RING = 0xFF457999;
     public static final int TEXT        = 0xFFEAEAEA;
 
     private NodeRenderer() {}
@@ -60,18 +67,33 @@ public final class NodeRenderer {
         int y = (int) node.position().y();
         int h = heightOf(node);
         int w = NODE_WIDTH;
+
+        // Soft drop shadow — two offset rects for a 2-pixel layered shadow.
+        graphics.fill(x + 2, y + h, x + w + 2, y + h + 2, SHADOW);
+        graphics.fill(x + w, y + 2, x + w + 2, y + h, SHADOW);
+
+        // Selected halo — a 2-px-wider tinted rect behind the node + chamfered corners.
+        if (selected) {
+            graphics.fill(x - 2, y - 2, x + w + 2, y + h + 2, GLOW_SELECTED);
+        }
+
+        // Body with chamfered corners: 1-px corners knocked out so it looks faintly rounded.
+        // Two overlapping rects achieve the chamfer in 2 fills.
+        graphics.fill(x + 1, y, x + w - 1, y + h, BG_DEEP);   // tall band
+        graphics.fill(x, y + 1, x + w, y + h - 1, BG_COLOR);  // wide band (covers more area)
+
+        // 1-px border around the chamfer.
         int borderColor = selected ? BORDER_SELECTED : BORDER;
-        int borderThickness = selected ? 2 : 1;
+        graphics.fill(x + 1, y, x + w - 1, y + 1, borderColor);                 // top
+        graphics.fill(x + 1, y + h - 1, x + w - 1, y + h, borderColor);         // bottom
+        graphics.fill(x, y + 1, x + 1, y + h - 1, borderColor);                 // left
+        graphics.fill(x + w - 1, y + 1, x + w, y + h - 1, borderColor);         // right
 
-        // Body + border.
-        graphics.fill(x, y, x + w, y + h, BG_COLOR);
-        graphics.fill(x - borderThickness, y - borderThickness, x + w + borderThickness, y, borderColor);  // top
-        graphics.fill(x - borderThickness, y + h, x + w + borderThickness, y + h + borderThickness, borderColor);  // bottom
-        graphics.fill(x - borderThickness, y, x, y + h, borderColor);  // left
-        graphics.fill(x + w, y, x + w + borderThickness, y + h, borderColor);  // right
+        // Header — two-tone gradient (lighter top → darker bottom) + bottom separator line.
+        graphics.fill(x + 1, y + 1, x + w - 1, y + HEADER_HEIGHT / 2 + 1, HEADER_BG_TOP);
+        graphics.fill(x + 1, y + HEADER_HEIGHT / 2 + 1, x + w - 1, y + HEADER_HEIGHT, HEADER_BG_BOTTOM);
+        graphics.fill(x + 1, y + HEADER_HEIGHT, x + w - 1, y + HEADER_HEIGHT + 1, HEADER_SEP);
 
-        // Header.
-        graphics.fill(x, y, x + w, y + HEADER_HEIGHT, HEADER_BG);
         if (!node.icon().isEmpty()) {
             renderScaledItem(graphics, node.icon(), x + 2, y + 2);
         }
@@ -127,11 +149,15 @@ public final class NodeRenderer {
         Vec2 center = portCenter(node, port.index(), output);
         int cx = (int) center.x();
         int cy = (int) center.y();
-        int color = port.type() == PortType.FLUID ? PORT_FLUID : PORT_ITEM;
+        boolean fluid = port.type() == PortType.FLUID;
+        int fill = fluid ? PORT_FLUID : PORT_ITEM;
+        int ring = fluid ? PORT_FLUID_RING : PORT_ITEM_RING;
 
-        // Filled square approximates a dot.
+        // Chamfered round-ish dot: outer ring (chamfered square) + inner filled square.
         int r = PORT_DOT_RADIUS;
-        graphics.fill(cx - r, cy - r, cx + r, cy + r, color);
+        graphics.fill(cx - r + 1, cy - r, cx + r - 1, cy + r, ring);
+        graphics.fill(cx - r, cy - r + 1, cx + r, cy + r - 1, ring);
+        graphics.fill(cx - r + 1, cy - r + 1, cx + r - 1, cy + r - 1, fill);
 
         // Item icon next to the dot, inside the node body. effectiveDisplay falls back to
         // Port.display() if the resolver couldn't infer anything (e.g. unconnected wildcard).

@@ -3,6 +3,7 @@ package dev.kima.cogwheel.client.ui.canvas;
 import com.mojang.blaze3d.vertex.PoseStack;
 import dev.kima.cogwheel.model.Design;
 import dev.kima.cogwheel.model.Node;
+import dev.kima.cogwheel.model.Vec2;
 import dev.kima.cogwheel.recipe.source.RebuildTrigger;
 import net.minecraft.client.gui.GuiGraphics;
 
@@ -46,6 +47,21 @@ public final class CanvasRenderer {
 
         for (Node node : design.nodes()) {
             NodeRenderer.render(graphics, node, canvas.isSelected(node.id()), resolver, RebuildTrigger.index());
+        }
+
+        // Marquee selection rectangle (world space, so it grows/shrinks with zoom naturally).
+        if (canvas.isDrawingSelectionRect()) {
+            Vec2 s = canvas.selectionRectStart();
+            Vec2 e = canvas.selectionRectEnd();
+            int x1 = (int) Math.min(s.x(), e.x());
+            int y1 = (int) Math.min(s.y(), e.y());
+            int x2 = (int) Math.max(s.x(), e.x());
+            int y2 = (int) Math.max(s.y(), e.y());
+            graphics.fill(x1, y1, x2, y2, 0x33FFCC55);
+            graphics.fill(x1, y1, x2, y1 + 1, 0xFFFFCC55);
+            graphics.fill(x1, y2 - 1, x2, y2, 0xFFFFCC55);
+            graphics.fill(x1, y1, x1 + 1, y2, 0xFFFFCC55);
+            graphics.fill(x2 - 1, y1, x2, y2, 0xFFFFCC55);
         }
 
         pose.popPose();

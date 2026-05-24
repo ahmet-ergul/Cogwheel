@@ -308,7 +308,14 @@ public final class LeftPanel {
                                 Component.translatable("screen.cogwheel.category.factories"),
                                 Component.translatable("screen.cogwheel.category.factories.subtitle"),
                                 true,
-                                () -> pushPage(new FactoriesPage(callbacks)))
+                                () -> pushPage(new FactoriesPage(callbacks))),
+                        new CategoriesPage.Category(
+                                new ItemStack(Items.REDSTONE),
+                                Component.translatable("screen.cogwheel.category.settings"),
+                                Component.translatable("screen.cogwheel.category.settings.subtitle"),
+                                true,
+                                true, // separatorAbove: visually peel off from feature categories
+                                () -> pushPage(new SettingsPage()))
                 ));
     }
 

@@ -20,6 +20,8 @@
   "screen.cogwheel.category.logic.subtitle": "Splitters, mergers, filters",
   "screen.cogwheel.category.factories": "Factories",
   "screen.cogwheel.category.factories.subtitle": "Switch / create / rename",
+  "screen.cogwheel.category.settings": "Settings",
+  "screen.cogwheel.category.settings.subtitle": "Editor preferences",
 
   "screen.cogwheel.logic.splitter": "Splitter",
   "screen.cogwheel.logic.splitter.subtitle": "1 input → N outputs",

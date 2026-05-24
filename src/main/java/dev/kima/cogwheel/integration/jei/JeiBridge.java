@@ -55,9 +55,11 @@ public final class JeiBridge {
         return jeiSourcedRecipes.get(entryId);
     }
 
-    /** Stash the live IJeiRuntime so the picker can ask it to draw recipe rows. */
+    /** Stash the live IJeiRuntime so the picker can ask it to draw recipe rows. Clears the
+     *  drawable cache so stale per-world recipe layouts don't bleed across worlds. */
     public static void setRuntime(Object runtime) {
         jeiRuntime = runtime;
+        JeiPickerRenderer.clearCache();
     }
 
     public static Object getRuntime() {
