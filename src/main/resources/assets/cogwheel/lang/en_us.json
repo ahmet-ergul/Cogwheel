@@ -29,10 +29,12 @@
   "screen.cogwheel.logic.merger.subtitle": "N inputs → 1 output",
   "screen.cogwheel.logic.limiter": "Limiter",
   "screen.cogwheel.logic.limiter.subtitle": "Cap flow; excess voided",
-  "screen.cogwheel.logic.filter": "Filter",
-  "screen.cogwheel.logic.filter.subtitle": "Route one item; reject the rest",
+  "screen.cogwheel.logic.void": "Void",
+  "screen.cogwheel.logic.void.subtitle": "Discard incoming items",
   "screen.cogwheel.logic.cluster": "Cluster",
   "screen.cogwheel.logic.cluster.subtitle": "Group nodes into a container",
+  "screen.cogwheel.logic.loop": "Loop",
+  "screen.cogwheel.logic.loop.subtitle": "Gate downstream by iteration count",
 
   "node.cogwheel.source.manual": "Source",
   "node.cogwheel.source.external_factory": "External Factory",
@@ -42,7 +44,8 @@
   "node.cogwheel.splitter": "Splitter",
   "node.cogwheel.merger": "Merger",
   "node.cogwheel.limiter": "Limiter",
-  "node.cogwheel.filter": "Filter",
+  "node.cogwheel.void": "Void",
+  "node.cogwheel.loop": "Loop",
 
   "screen.cogwheel.external_picker.title": "Choose external output",
   "screen.cogwheel.factories": "Factories"

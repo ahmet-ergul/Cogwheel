@@ -26,6 +26,11 @@ public record RecipeNode(
         int parallelism
 ) implements Node {
     @Override
+    public List<Port> bottomPorts() {
+        return List.of(new Port(0, PortType.LOOP, "loop", ItemStack.EMPTY));
+    }
+
+    @Override
     public RecipeNode withPosition(Vec2 newPosition) {
         return new RecipeNode(id, newPosition, recipeId, title, icon, inputs, outputs, parallelism);
     }

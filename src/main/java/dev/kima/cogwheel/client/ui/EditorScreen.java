@@ -18,8 +18,9 @@ import dev.kima.cogwheel.model.Edge;
 import dev.kima.cogwheel.model.Factory;
 import dev.kima.cogwheel.model.FactoryStore;
 import dev.kima.cogwheel.model.ClusterNode;
-import dev.kima.cogwheel.model.FilterNode;
+import dev.kima.cogwheel.model.VoidNode;
 import dev.kima.cogwheel.model.LimiterNode;
+import dev.kima.cogwheel.model.LoopNode;
 import dev.kima.cogwheel.model.MergerNode;
 import dev.kima.cogwheel.model.Node;
 import dev.kima.cogwheel.model.OutputNode;
@@ -124,7 +125,12 @@ public class EditorScreen extends Screen {
             FactoryStore.get().bootstrapIfEmpty("Default Factory");
             FactoryStore.get().updateCurrent(DemoDesigns.ironSmelting());
         }
-        design = FactoryStore.get().current().design();
+        // Only re-read the root design when we're not inside a cluster. Otherwise (re-init from
+        // picker close, window resize, etc.) preserve the active cluster's inner design so drops
+        // and edits still land in the cluster instead of leaking to the root.
+        if (!inCluster()) {
+            design = FactoryStore.get().current().design();
+        }
 
         LeftPanelPage.WidgetHost widgetHost = new LeftPanelPage.WidgetHost() {
             @Override
@@ -157,8 +163,9 @@ public class EditorScreen extends Screen {
                             this::refreshFactories,
                             FactoryFileStore::openFactoriesFolder,
                             this::addLimiterNode,
-                            this::addFilterNode,
-                            this::addClusterNode),
+                            this::addVoidNode,
+                            this::addClusterNode,
+                            this::addLoopNode),
                     null);
             leftPanel.open();
         } else {
@@ -473,8 +480,10 @@ public class EditorScreen extends Screen {
 
             // Priority: ports → nodes → background. Edges + right-click handled separately.
             // Locked clusters never start edge drags.
+            // Bottom-side loop ports also start a drag — direction (source vs receiver) is
+            // resolved at drop time by EdgeValidation, which checks which side is the LoopNode.
             Optional<HitTest.PortHit> portHit = HitTest.portAt(design, world.x(), world.y(), PORT_HIT_RADIUS);
-            if (portHit.isPresent() && portHit.get().output() && !locked) {
+            if (portHit.isPresent() && (portHit.get().output() || portHit.get().bottom()) && !locked) {
                 canvas.startEdgeDrag(portHit.get(), world.x(), world.y());
                 return true;
             }
@@ -489,6 +498,21 @@ public class EditorScreen extends Screen {
                 lastClickedAt = now;
                 if (ctrl) {
                     canvas.toggleSelection(node.id());
+                    return true;
+                }
+                // Shift / Alt + click: quick-connect from the singly-selected node to the clicked one.
+                if (!locked && (hasShiftDown() || hasAltDown())
+                        && canvas.selectedNodes().size() == 1
+                        && !canvas.isSelected(node.id())) {
+                    UUID firstId = canvas.selectedNodeId();
+                    Node first = design.findNode(firstId);
+                    if (first != null) {
+                        Edge connection = hasShiftDown()
+                                ? trySmartConnect(first, node)
+                                : trySmartConnect(node, first);
+                        if (connection != null) setDesign(design.withEdgeAdded(connection));
+                    }
+                    canvas.setSelectedNodeId(node.id());
                     return true;
                 }
                 if (!canvas.isSelected(node.id())) {
@@ -626,10 +650,12 @@ public class EditorScreen extends Screen {
                 if (drop.isPresent() && EdgeValidation.canConnect(design, canvas.pendingEdgeFrom(), drop.get())) {
                     HitTest.PortHit from = canvas.pendingEdgeFrom();
                     HitTest.PortHit to = drop.get();
+                    // Carry fromBottom/toBottom flags so bottom-port loop edges round-trip through
+                    // the codec correctly and the renderer picks the violet vertical curve.
                     setDesign(design.withEdgeAdded(new Edge(
                             from.node().id(), from.port().index(),
                             to.node().id(), to.port().index(),
-                            0.0)));
+                            0.0, from.bottom(), to.bottom())));
                 }
                 canvas.endEdgeDrag();
                 return true;
@@ -926,8 +952,14 @@ public class EditorScreen extends Screen {
         canvas.setSelectedNodeId(node.id());
     }
 
-    private void addFilterNode() {
-        FilterNode node = new FilterNode(UUID.randomUUID(), canvasCenter(), ItemStack.EMPTY);
+    private void addVoidNode() {
+        VoidNode node = new VoidNode(UUID.randomUUID(), canvasCenter(), VoidNode.DEFAULT_INPUTS);
+        setDesign(design.withNodeAdded(node));
+        canvas.setSelectedNodeId(node.id());
+    }
+
+    private void addLoopNode() {
+        LoopNode node = new LoopNode(UUID.randomUUID(), canvasCenter(), LoopNode.DEFAULT_LOOPS);
         setDesign(design.withNodeAdded(node));
         canvas.setSelectedNodeId(node.id());
     }
@@ -941,6 +973,32 @@ public class EditorScreen extends Screen {
     private void replaceEditingNode(Node updated) {
         if (editingNodeId == null) return;
         setDesign(design.withNodeReplaced(editingNodeId, updated));
+    }
+
+    /** Find the first (output, input) port pair between {@code from} and {@code to} that matches
+     *  on item type (wildcard ports always pass) and isn't already wired. Returns the edge to add,
+     *  or null if no compatible free pair exists. */
+    private Edge trySmartConnect(Node from, Node to) {
+        if (from.outputs().isEmpty() || to.inputs().isEmpty()) return null;
+        for (int fp = 0; fp < from.outputs().size(); fp++) {
+            ItemStack outItem = from.outputs().get(fp).display();
+            for (int tp = 0; tp < to.inputs().size(); tp++) {
+                if (hasIncomingEdge(to.id(), tp)) continue;
+                ItemStack inItem = to.inputs().get(tp).display();
+                boolean wildcard = outItem.isEmpty() || inItem.isEmpty();
+                if (wildcard || outItem.getItem() == inItem.getItem()) {
+                    return new Edge(from.id(), fp, to.id(), tp, 0.0);
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean hasIncomingEdge(UUID nodeId, int portIndex) {
+        for (Edge e : design.edges()) {
+            if (e.to().equals(nodeId) && e.toPort() == portIndex) return true;
+        }
+        return false;
     }
 
     private Node cloneNodeAtOffset(Node source, int dx, int dy) {
@@ -961,8 +1019,10 @@ public class EditorScreen extends Screen {
             return new OutputNode(newId, newPos, on.item(), on.exportName());
         } else if (source instanceof LimiterNode ln) {
             return new LimiterNode(newId, newPos, ln.limitPerMin());
-        } else if (source instanceof FilterNode fn) {
-            return new FilterNode(newId, newPos, fn.matchItem());
+        } else if (source instanceof VoidNode vn) {
+            return new VoidNode(newId, newPos, vn.inputCount());
+        } else if (source instanceof LoopNode ln) {
+            return new LoopNode(newId, newPos, ln.loopCount());
         } else if (source instanceof ClusterNode cn) {
             // Inner design is shared by reference — cluster contents are immutable records, so
             // both copies see the same subgraph until the user mutates either's innerDesign field.

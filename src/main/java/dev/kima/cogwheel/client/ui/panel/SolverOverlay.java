@@ -1,5 +1,6 @@
 package dev.kima.cogwheel.client.ui.panel;
 
+import dev.kima.cogwheel.client.ui.ScaledUi;
 import dev.kima.cogwheel.solver.SolverResult;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -17,7 +18,7 @@ import java.util.Map;
  * item-icon + rate.
  */
 public final class SolverOverlay {
-    public static final int HEIGHT = 24;
+    public static final int HEIGHT = 30;
     private static final int PADDING = 5;
     private static final int BG = 0xEE131726;
     private static final int BORDER = 0xFF2A3148;
@@ -35,7 +36,7 @@ public final class SolverOverlay {
 
         if (result.hasCycle()) {
             String msg = "⚠ Graph has a cycle — cannot solve.";
-            graphics.drawString(font, msg, x + PADDING, y + (HEIGHT - 8) / 2, ERROR, false);
+            ScaledUi.drawString(graphics, font,msg, x + PADDING, y + (HEIGHT - 8) / 2, ERROR, false);
             return;
         }
 
@@ -51,14 +52,14 @@ public final class SolverOverlay {
 
     private static void renderColumn(GuiGraphics graphics, Font font, String label,
                                      Map<Item, Double> data, int x, int y, int w) {
-        graphics.drawString(font, label, x, y + 2, LABEL, false);
+        ScaledUi.drawString(graphics, font,label, x, y + 2, LABEL, false);
 
         List<Map.Entry<Item, Double>> entries = data.entrySet().stream()
                 .filter(e -> e.getValue() > 0)
                 .sorted(Comparator.<Map.Entry<Item, Double>, Double>comparing(Map.Entry::getValue).reversed())
                 .toList();
         if (entries.isEmpty()) {
-            graphics.drawString(font, "—", x, y + 14, TEXT, false);
+            ScaledUi.drawString(graphics, font,"—", x, y + 14, TEXT, false);
             return;
         }
 
@@ -68,16 +69,16 @@ public final class SolverOverlay {
         for (Map.Entry<Item, Double> entry : entries) {
             if (shown >= MAX_ITEMS_PER_COLUMN) {
                 int remaining = entries.size() - shown;
-                graphics.drawString(font, "+" + remaining + " more", cursorX, rowY + 4, LABEL, false);
+                ScaledUi.drawString(graphics, font,"+" + remaining + " more", cursorX, rowY + 4, LABEL, false);
                 break;
             }
             ItemStack stack = new ItemStack(entry.getKey());
             renderScaledItem(graphics, stack, cursorX, rowY, 0.75f);
             String num = formatRate(entry.getValue());
-            int numW = font.width(num);
+            int numW = ScaledUi.scaledWidth(font, num);
             int iconCellW = 14;
             if (cursorX + iconCellW + numW > x + w) break;
-            graphics.drawString(font, num, cursorX + iconCellW, rowY + 4, TEXT, false);
+            ScaledUi.drawString(graphics, font,num, cursorX + iconCellW, rowY + 4, TEXT, false);
             cursorX += iconCellW + numW + 6;
             shown++;
             if (cursorX > x + w) break;

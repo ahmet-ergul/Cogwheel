@@ -46,10 +46,25 @@ public record Design(
         }
         int newOutputCount = replacement.outputs().size();
         int newInputCount = replacement.inputs().size();
+        int newBottomCount = replacement.bottomPorts().size();
         List<Edge> prunedEdges = new ArrayList<>(edges.size());
         for (Edge e : edges) {
-            if (e.from().equals(id) && e.fromPort() >= newOutputCount) continue;
-            if (e.to().equals(id) && e.toPort() >= newInputCount) continue;
+            // Bottom-edge endpoints index into bottomPorts() list. Drop any edge whose bottom-port
+            // index is no longer in range (e.g., LoopNode shrunk from 2 to 1 ports).
+            if (e.from().equals(id)) {
+                if (e.fromBottom()) {
+                    if (e.fromPort() >= newBottomCount) continue;
+                } else if (e.fromPort() >= newOutputCount) {
+                    continue;
+                }
+            }
+            if (e.to().equals(id)) {
+                if (e.toBottom()) {
+                    if (e.toPort() >= newBottomCount) continue;
+                } else if (e.toPort() >= newInputCount) {
+                    continue;
+                }
+            }
             prunedEdges.add(e);
         }
         return new Design(name, List.copyOf(updated), List.copyOf(prunedEdges));

@@ -1,5 +1,6 @@
 package dev.kima.cogwheel.client.ui.panel;
 
+import dev.kima.cogwheel.client.ui.ScaledUi;
 import dev.kima.cogwheel.model.Factory;
 import dev.kima.cogwheel.model.FactoryStore;
 import net.minecraft.client.Minecraft;
@@ -82,7 +83,7 @@ public final class FactoriesPage implements LeftPanelPage {
         if (newHover) {
             graphics.fill(x + 2, newRowY, x + width - 2, newRowY + ROW_HEIGHT, BG_HOVER);
         }
-        graphics.drawString(font, "+ New factory", x + PADDING, newRowY + 7, TEXT, false);
+        ScaledUi.drawString(graphics, font,"+ New factory", x + PADDING, newRowY + 7, TEXT, false);
 
         // List of factories below the "+ New" row.
         int listY = newRowY + ROW_HEIGHT + 2;
@@ -104,7 +105,7 @@ public final class FactoriesPage implements LeftPanelPage {
             }
 
             String name = f.name().isEmpty() ? "(unnamed)" : f.name();
-            graphics.drawString(font, truncate(font, name, width - PADDING * 2 - BUTTON_SIZE * 2 - 8),
+            ScaledUi.drawString(graphics, font, ScaledUi.truncate(font, name, width - PADDING * 2 - BUTTON_SIZE * 2 - 8),
                     x + PADDING, rowY + 7, isCurrent ? TEXT : TEXT_DIM, false);
 
             // Buttons on the right: ✎ rename, × delete.
@@ -139,16 +140,16 @@ public final class FactoriesPage implements LeftPanelPage {
         // Footer count.
         int footerY = y + height - FOOTER_HEIGHT + 2;
         graphics.fill(x, footerY - 2, x + width, footerY - 1, BORDER);
-        graphics.drawString(font, Component.literal(all.size() + " factories"),
-                x + PADDING, footerY + 2, TEXT_DIM, false);
+        ScaledUi.drawString(graphics, font, all.size() + " factories",
+                x + PADDING, footerY + 2, TEXT_DIM);
     }
 
     private void drawActionButton(GuiGraphics graphics, Font font, int bx, int by, int bw, int bh,
                                   String label, int mouseX, int mouseY) {
         boolean hover = mouseX >= bx && mouseX <= bx + bw && mouseY >= by && mouseY < by + bh;
         graphics.fill(bx, by, bx + bw, by + bh, hover ? BUTTON_HOVER : BG_HOVER);
-        int tw = font.width(label);
-        graphics.drawString(font, label, bx + (bw - tw) / 2, by + (bh - 8) / 2, TEXT, false);
+        int tw = ScaledUi.scaledWidth(font, label);
+        ScaledUi.drawString(graphics, font, label, bx + (bw - tw) / 2, by + (bh - 8) / 2, TEXT, false);
     }
 
     private boolean inRow(double mouseX, double mouseY, int rowY) {
@@ -159,7 +160,7 @@ public final class FactoriesPage implements LeftPanelPage {
                             int mouseX, int mouseY, int color) {
         boolean hover = mouseX >= x && mouseX <= x + BUTTON_SIZE && mouseY >= y && mouseY < y + BUTTON_SIZE;
         if (hover) graphics.fill(x, y, x + BUTTON_SIZE, y + BUTTON_SIZE, BUTTON_HOVER);
-        graphics.drawString(font, label, x + 4, y + 3, color, false);
+        ScaledUi.drawString(graphics, font,label, x + 4, y + 3, color, false);
     }
 
     @Override

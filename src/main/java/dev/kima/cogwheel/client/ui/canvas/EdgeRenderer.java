@@ -17,6 +17,8 @@ public final class EdgeRenderer {
     public static final int EDGE_COLOR = 0xFFE8B86E;
     public static final int EDGE_SELECTED_COLOR = 0xFFFFE9A8;
     public static final int PENDING_EDGE_COLOR = 0x88E8B86E; // faded for the in-progress drag
+    public static final int LOOP_EDGE_COLOR = 0xFFB89AE8;   // violet matches loop port dot
+    public static final int LOOP_EDGE_PENDING = 0x88B89AE8;
     public static final float EDGE_WIDTH = 2.0f;
     public static final float EDGE_SELECTED_WIDTH = 3.5f;
 
@@ -30,22 +32,38 @@ public final class EdgeRenderer {
 
     /** Renders a faded preview bezier from a port to the cursor while the user is drag-creating an edge. */
     public static void renderPending(GuiGraphics graphics, HitTest.PortHit from, double cursorWorldX, double cursorWorldY) {
-        Vec2 start = NodeRenderer.portCenter(from.node(), from.port().index(), from.output());
+        Vec2 start = from.bottom()
+                ? NodeRenderer.bottomPortCenter(from.node(), from.port().index())
+                : NodeRenderer.portCenter(from.node(), from.port().index(), from.output());
+        if (start == null) return;
         Vec2 end = new Vec2(cursorWorldX, cursorWorldY);
-        drawCurve(graphics, start, end, PENDING_EDGE_COLOR);
+        int color = from.bottom() ? LOOP_EDGE_PENDING : PENDING_EDGE_COLOR;
+        if (from.bottom()) drawLoopLine(graphics, start, end, color, EDGE_WIDTH);
+        else drawCurve(graphics, start, end, color);
     }
 
     private static void renderOne(GuiGraphics graphics, Design design, Edge edge, boolean selected) {
         Node from = design.findNode(edge.from());
         Node to = design.findNode(edge.to());
         if (from == null || to == null) return;
-        if (edge.fromPort() >= from.outputs().size() || edge.toPort() >= to.inputs().size()) return;
+        // Validate index/bottom presence on each side before we look up port centers.
+        if (!edge.fromBottom() && edge.fromPort() >= from.outputs().size()) return;
+        if (!edge.toBottom() && edge.toPort() >= to.inputs().size()) return;
+        if (edge.fromBottom() && edge.fromPort() >= from.bottomPorts().size()) return;
+        if (edge.toBottom() && edge.toPort() >= to.bottomPorts().size()) return;
 
-        Vec2 start = NodeRenderer.portCenter(from, edge.fromPort(), true);
-        Vec2 end = NodeRenderer.portCenter(to, edge.toPort(), false);
-        int color = selected ? EDGE_SELECTED_COLOR : EDGE_COLOR;
+        Vec2 start = edge.fromBottom()
+                ? NodeRenderer.bottomPortCenter(from, edge.fromPort())
+                : NodeRenderer.portCenter(from, edge.fromPort(), true);
+        Vec2 end = edge.toBottom()
+                ? NodeRenderer.bottomPortCenter(to, edge.toPort())
+                : NodeRenderer.portCenter(to, edge.toPort(), false);
+        if (start == null || end == null) return;
+        boolean loopEdge = edge.isLoopEdge();
+        int color = selected ? EDGE_SELECTED_COLOR : (loopEdge ? LOOP_EDGE_COLOR : EDGE_COLOR);
         float width = selected ? EDGE_SELECTED_WIDTH : EDGE_WIDTH;
-        drawCurve(graphics, start, end, color, width);
+        if (loopEdge) drawLoopLine(graphics, start, end, color, width);
+        else drawCurve(graphics, start, end, color, width);
     }
 
     /** Used by RenderPending — same signature as before, default width. */
@@ -71,6 +89,14 @@ public final class EdgeRenderer {
             xs[i] = (float) x;
             ys[i] = (float) y;
         }
+        LineRenderer.drawPolyline(graphics, xs, ys, color, width);
+    }
+
+    /** Loop edges (LoopNode top-port ↔ gated node bottom-port) are simple diagonal straight lines.
+     *  The natural geometry — LoopNode below, gated node above — produces a clean line drop. */
+    private static void drawLoopLine(GuiGraphics graphics, Vec2 start, Vec2 end, int color, float width) {
+        float[] xs = { (float) start.x(), (float) end.x() };
+        float[] ys = { (float) start.y(), (float) end.y() };
         LineRenderer.drawPolyline(graphics, xs, ys, color, width);
     }
 }

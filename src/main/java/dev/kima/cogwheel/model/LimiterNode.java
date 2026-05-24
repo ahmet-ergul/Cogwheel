@@ -38,6 +38,11 @@ public record LimiterNode(
     }
 
     @Override
+    public List<Port> bottomPorts() {
+        return List.of(new Port(0, PortType.LOOP, "loop", ItemStack.EMPTY));
+    }
+
+    @Override
     public ItemStack icon() {
         return new ItemStack(Items.REDSTONE_TORCH);
     }

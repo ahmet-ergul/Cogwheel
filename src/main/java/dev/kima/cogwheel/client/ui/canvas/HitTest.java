@@ -53,7 +53,7 @@ public final class HitTest {
                 double d2 = sqDist(c.x(), c.y(), wx, wy);
                 if (d2 <= bestDist2) {
                     bestDist2 = d2;
-                    best = new PortHit(n, p, false);
+                    best = new PortHit(n, p, false, false);
                 }
             }
             for (Port p : n.outputs()) {
@@ -61,7 +61,20 @@ public final class HitTest {
                 double d2 = sqDist(c.x(), c.y(), wx, wy);
                 if (d2 <= bestDist2) {
                     bestDist2 = d2;
-                    best = new PortHit(n, p, true);
+                    best = new PortHit(n, p, true, false);
+                }
+            }
+            // Loop-control ports. Treated as "output" for the purposes of edge creation —
+            // direction (source vs receiver) is resolved at drop time by EdgeValidation, which
+            // checks which side of the edge is the LoopNode.
+            java.util.List<Port> bottomPorts = n.bottomPorts();
+            for (int i = 0; i < bottomPorts.size(); i++) {
+                Vec2 c = NodeRenderer.bottomPortCenter(n, i);
+                if (c == null) continue;
+                double d2 = sqDist(c.x(), c.y(), wx, wy);
+                if (d2 <= bestDist2) {
+                    bestDist2 = d2;
+                    best = new PortHit(n, bottomPorts.get(i), false, true);
                 }
             }
         }
@@ -79,10 +92,18 @@ public final class HitTest {
             Node from = design.findNode(edge.from());
             Node to = design.findNode(edge.to());
             if (from == null || to == null) continue;
-            if (edge.fromPort() >= from.outputs().size() || edge.toPort() >= to.inputs().size()) continue;
+            // Validate the indexed port exists for each side; bottom ports use bottomPorts() list.
+            if (!edge.fromBottom() && edge.fromPort() >= from.outputs().size()) continue;
+            if (!edge.toBottom() && edge.toPort() >= to.inputs().size()) continue;
+            if (edge.fromBottom() && edge.fromPort() >= from.bottomPorts().size()) continue;
+            if (edge.toBottom() && edge.toPort() >= to.bottomPorts().size()) continue;
 
-            Vec2 start = NodeRenderer.portCenter(from, edge.fromPort(), true);
-            Vec2 end = NodeRenderer.portCenter(to, edge.toPort(), false);
+            Vec2 start = edge.fromBottom()
+                    ? NodeRenderer.bottomPortCenter(from, edge.fromPort())
+                    : NodeRenderer.portCenter(from, edge.fromPort(), true);
+            Vec2 end = edge.toBottom()
+                    ? NodeRenderer.bottomPortCenter(to, edge.toPort())
+                    : NodeRenderer.portCenter(to, edge.toPort(), false);
             double dx = end.x() - start.x();
             double bend = Math.max(40, Math.abs(dx) * 0.5);
             Vec2 c1 = new Vec2(start.x() + bend, start.y());
@@ -125,6 +146,13 @@ public final class HitTest {
         return sqDist(px, py, projX, projY);
     }
 
-    /** Result record for {@link #portAt}: which node owns the port, the port itself, and whether it's an output. */
-    public record PortHit(Node node, Port port, boolean output) {}
+    /** Result record for {@link #portAt}: which node owns the port, the port itself, whether it's
+     *  an output (right-side; ignored when {@code bottom} is true), and whether this is the node's
+     *  bottom-edge loop port. */
+    public record PortHit(Node node, Port port, boolean output, boolean bottom) {
+        /** Back-compat: existing 3-arg callers default {@code bottom} to false. */
+        public PortHit(Node node, Port port, boolean output) {
+            this(node, port, output, false);
+        }
+    }
 }

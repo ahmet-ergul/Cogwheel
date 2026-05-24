@@ -1,5 +1,6 @@
 package dev.kima.cogwheel.client.ui.panel;
 
+import dev.kima.cogwheel.client.ui.ScaledUi;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
@@ -76,11 +77,14 @@ public final class CategoriesPage implements LeftPanelPage {
                 graphics.renderItem(cat.icon(), x + PADDING, rowY + 6);
             }
             int labelColor = cat.enabled() ? TEXT : TEXT_DISABLED;
-            graphics.drawString(font, cat.label(), x + PADDING + 22, rowY + 5, labelColor, false);
-            graphics.drawString(font, cat.subtitle(), x + PADDING + 22, rowY + 16,
-                    cat.enabled() ? TEXT_DIM : TEXT_DISABLED, false);
+            int textX = x + PADDING + 22;
+            int textMaxW = width - (textX - x) - PADDING - 12;  // reserve right edge for chevron + scrollbar
+            ScaledUi.drawString(graphics, font, ScaledUi.truncate(font, cat.label().getString(), textMaxW),
+                    textX, rowY + 5, labelColor);
+            ScaledUi.drawString(graphics, font, ScaledUi.truncate(font, cat.subtitle().getString(), textMaxW),
+                    textX, rowY + 16, cat.enabled() ? TEXT_DIM : TEXT_DISABLED);
             if (cat.enabled()) {
-                graphics.drawString(font, "›", x + width - 14, rowY + 10, TEXT_DIM, false);
+                ScaledUi.drawString(graphics, font, "›", x + width - 14, rowY + 10, TEXT_DIM);
             }
             rowY += ROW_HEIGHT;
         }
@@ -106,4 +110,5 @@ public final class CategoriesPage implements LeftPanelPage {
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollY) {
         return false;
     }
+
 }

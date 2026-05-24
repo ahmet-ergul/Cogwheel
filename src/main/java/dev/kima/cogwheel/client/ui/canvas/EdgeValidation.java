@@ -2,6 +2,7 @@ package dev.kima.cogwheel.client.ui.canvas;
 
 import dev.kima.cogwheel.model.Design;
 import dev.kima.cogwheel.model.Edge;
+import dev.kima.cogwheel.model.Node;
 import dev.kima.cogwheel.model.PortType;
 import net.minecraft.world.item.ItemStack;
 
@@ -28,6 +29,11 @@ public final class EdgeValidation {
     private EdgeValidation() {}
 
     public static boolean canConnect(Design design, HitTest.PortHit from, HitTest.PortHit to) {
+        // Bottom-port loop edges use their own rules: bottom↔bottom only, between a LoopNode
+        // (which has bottomPort) and any other node that has bottomPort.
+        if (from.bottom() || to.bottom()) {
+            return canConnectLoop(design, from, to);
+        }
         if (!from.output()) return false;
         if (to.output()) return false;
         if (from.node().id().equals(to.node().id())) return false;
@@ -44,12 +50,50 @@ public final class EdgeValidation {
 
         // 1-to-1 cardinality: reject if either endpoint is already engaged.
         for (Edge existing : design.edges()) {
+            if (existing.fromBottom() || existing.toBottom()) continue;
             if (existing.from().equals(from.node().id()) && existing.fromPort() == from.port().index()) {
                 return false; // output port already has an outgoing edge
             }
             if (existing.to().equals(to.node().id()) && existing.toPort() == to.port().index()) {
                 return false; // input port already has an incoming edge
             }
+        }
+        return true;
+    }
+
+    /** Bottom-port edge rules: both sides must be bottom ports, types must match (both LOOP),
+     *  exactly one side must be a {@link dev.kima.cogwheel.model.LoopNode} (the signal source),
+     *  and each receiver bottom port may have at most one incoming attachment. */
+    private static boolean canConnectLoop(Design design, HitTest.PortHit from, HitTest.PortHit to) {
+        if (!from.bottom() || !to.bottom()) return false;
+        if (from.node().id().equals(to.node().id())) return false;
+        if (from.port().type() != PortType.LOOP || to.port().type() != PortType.LOOP) return false;
+
+        boolean fromIsLoop = from.node() instanceof dev.kima.cogwheel.model.LoopNode;
+        boolean toIsLoop = to.node() instanceof dev.kima.cogwheel.model.LoopNode;
+        // Exactly one side must be the LoopNode (the emitter). Two LoopNodes or zero LoopNodes
+        // wouldn't have meaningful semantics.
+        if (fromIsLoop == toIsLoop) return false;
+
+        // 1-to-1 cardinality, both sides:
+        //  - The receiver bottom port may have at most one incoming loop edge (per (nodeId, portIndex)).
+        //  - The LoopNode's two ports (0=start, 1=end) may each have at most one outgoing loop edge.
+        java.util.UUID receiverId = fromIsLoop ? to.node().id() : from.node().id();
+        int receiverPort = fromIsLoop ? to.port().index() : from.port().index();
+        java.util.UUID loopId = fromIsLoop ? from.node().id() : to.node().id();
+        int loopPort = fromIsLoop ? from.port().index() : to.port().index();
+        for (Edge existing : design.edges()) {
+            if (!existing.isLoopEdge()) continue;
+            Node exFrom = design.findNode(existing.from());
+            Node exTo = design.findNode(existing.to());
+            if (exFrom == null || exTo == null) continue;
+            boolean exFromIsLoop = exFrom instanceof dev.kima.cogwheel.model.LoopNode;
+            java.util.UUID exLoop = exFromIsLoop ? existing.from() : existing.to();
+            int exLoopPort = exFromIsLoop ? existing.fromPort() : existing.toPort();
+            java.util.UUID exReceiver = exFromIsLoop ? existing.to() : existing.from();
+            int exReceiverPort = exFromIsLoop ? existing.toPort() : existing.fromPort();
+            if (exReceiver.equals(receiverId) && exReceiverPort == receiverPort) return false;
+            if (exLoop.equals(loopId) && exLoopPort == loopPort) return false;
         }
         return true;
     }

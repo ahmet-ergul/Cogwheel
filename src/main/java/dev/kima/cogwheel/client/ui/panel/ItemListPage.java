@@ -1,5 +1,6 @@
 package dev.kima.cogwheel.client.ui.panel;
 
+import dev.kima.cogwheel.client.ui.ScaledUi;
 import dev.kima.cogwheel.integration.jei.JeiBridge;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -182,7 +183,7 @@ public final class ItemListPage implements LeftPanelPage {
         String counter = filtered.size() == allItems.size()
                 ? allItems.size() + " items"
                 : filtered.size() + " of " + allItems.size();
-        graphics.drawString(font, Component.literal(counter), x + PADDING, footerY + 2, TEXT_DIM, false);
+        ScaledUi.drawString(graphics, font, counter, x + PADDING, footerY + 2, TEXT_DIM);
 
         // Drag ghost — small icon following cursor while a drag is in progress, even outside the panel.
         if (dragStarted && pendingDragItem != null) {

@@ -1,5 +1,6 @@
 package dev.kima.cogwheel.client.ui.panel;
 
+import dev.kima.cogwheel.client.ui.ScaledUi;
 import dev.kima.cogwheel.recipe.RecipeIndex;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -52,8 +53,9 @@ public final class LeftPanel {
             Runnable onRefreshFactories,
             Runnable onOpenFactoriesFolder,
             Runnable onAddLimiter,
-            Runnable onAddFilter,
-            Runnable onAddCluster
+            Runnable onAddVoid,
+            Runnable onAddCluster,
+            Runnable onAddLoop
     ) {}
 
     /** Mutable so the panel survives a parent-screen re-init: the WidgetHost is bound to a Screen
@@ -166,8 +168,9 @@ public final class LeftPanel {
         if (!pageStack.isEmpty()) {
             String title = pageStack.peek().title().getString();
             int titleX = (pageStack.size() > 1) ? x + BACK_SIZE + PADDING * 2 : x + PADDING;
-            graphics.drawString(font, truncate(font, title, WIDTH - CLOSE_SIZE - PADDING * 4 - (pageStack.size() > 1 ? BACK_SIZE + PADDING : 0)),
-                    titleX, y + 7, TEXT, false);
+            int maxW = WIDTH - CLOSE_SIZE - PADDING * 4 - (pageStack.size() > 1 ? BACK_SIZE + PADDING : 0);
+            ScaledUi.drawString(graphics, font, ScaledUi.truncate(font, title, maxW),
+                    titleX, y + 7, TEXT);
         }
 
         // Close button (always).
@@ -352,17 +355,23 @@ public final class LeftPanel {
                                 true,
                                 () -> callbacks.onAddLimiter().run()),
                         new CategoriesPage.Category(
-                                new ItemStack(Items.COMPARATOR),
-                                Component.translatable("screen.cogwheel.logic.filter"),
-                                Component.translatable("screen.cogwheel.logic.filter.subtitle"),
+                                new ItemStack(Items.LAVA_BUCKET),
+                                Component.translatable("screen.cogwheel.logic.void"),
+                                Component.translatable("screen.cogwheel.logic.void.subtitle"),
                                 true,
-                                () -> callbacks.onAddFilter().run()),
+                                () -> callbacks.onAddVoid().run()),
                         new CategoriesPage.Category(
                                 new ItemStack(Items.BUNDLE),
                                 Component.translatable("screen.cogwheel.logic.cluster"),
                                 Component.translatable("screen.cogwheel.logic.cluster.subtitle"),
                                 true,
-                                () -> callbacks.onAddCluster().run())
+                                () -> callbacks.onAddCluster().run()),
+                        new CategoriesPage.Category(
+                                new ItemStack(Items.CLOCK),
+                                Component.translatable("screen.cogwheel.logic.loop"),
+                                Component.translatable("screen.cogwheel.logic.loop.subtitle"),
+                                true,
+                                () -> callbacks.onAddLoop().run())
                 ));
     }
 

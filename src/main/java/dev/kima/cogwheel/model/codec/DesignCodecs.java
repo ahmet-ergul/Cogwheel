@@ -8,8 +8,9 @@ import dev.kima.cogwheel.model.ClusterNode;
 import dev.kima.cogwheel.model.Edge;
 import dev.kima.cogwheel.model.ExternalRef;
 import dev.kima.cogwheel.model.Factory;
-import dev.kima.cogwheel.model.FilterNode;
+import dev.kima.cogwheel.model.VoidNode;
 import dev.kima.cogwheel.model.LimiterNode;
+import dev.kima.cogwheel.model.LoopNode;
 import dev.kima.cogwheel.model.MergerNode;
 import dev.kima.cogwheel.model.Node;
 import dev.kima.cogwheel.model.OutputNode;
@@ -134,11 +135,17 @@ public final class DesignCodecs {
             Codec.DOUBLE.fieldOf("limit_per_min").forGetter(LimiterNode::limitPerMin)
     ).apply(i, LimiterNode::new));
 
-    public static final MapCodec<FilterNode> FILTER_NODE = RecordCodecBuilder.mapCodec(i -> i.group(
-            UUIDUtil.CODEC.fieldOf("id").forGetter(FilterNode::id),
-            VEC2.fieldOf("position").forGetter(FilterNode::position),
-            ITEM_STACK.fieldOf("match_item").forGetter(FilterNode::matchItem)
-    ).apply(i, FilterNode::new));
+    public static final MapCodec<VoidNode> VOID_NODE = RecordCodecBuilder.mapCodec(i -> i.group(
+            UUIDUtil.CODEC.fieldOf("id").forGetter(VoidNode::id),
+            VEC2.fieldOf("position").forGetter(VoidNode::position),
+            Codec.INT.fieldOf("input_count").forGetter(VoidNode::inputCount)
+    ).apply(i, VoidNode::new));
+
+    public static final MapCodec<LoopNode> LOOP_NODE = RecordCodecBuilder.mapCodec(i -> i.group(
+            UUIDUtil.CODEC.fieldOf("id").forGetter(LoopNode::id),
+            VEC2.fieldOf("position").forGetter(LoopNode::position),
+            Codec.INT.fieldOf("loop_count").forGetter(LoopNode::loopCount)
+    ).apply(i, LoopNode::new));
 
     public static final Codec<ClusterNode.Kind> CLUSTER_KIND = Codec.STRING.xmap(
             ClusterNode.Kind::valueOf, ClusterNode.Kind::name);
@@ -165,7 +172,9 @@ public final class DesignCodecs {
             Codec.INT.fieldOf("from_port").forGetter(Edge::fromPort),
             UUIDUtil.CODEC.fieldOf("to").forGetter(Edge::to),
             Codec.INT.fieldOf("to_port").forGetter(Edge::toPort),
-            Codec.DOUBLE.optionalFieldOf("rate", 0.0).forGetter(Edge::rate)
+            Codec.DOUBLE.optionalFieldOf("rate", 0.0).forGetter(Edge::rate),
+            Codec.BOOL.optionalFieldOf("from_bottom", false).forGetter(Edge::fromBottom),
+            Codec.BOOL.optionalFieldOf("to_bottom", false).forGetter(Edge::toBottom)
     ).apply(i, Edge::new));
 
     public static final Codec<Design> DESIGN = RecordCodecBuilder.create(i -> i.group(
@@ -189,8 +198,9 @@ public final class DesignCodecs {
         if (node instanceof MergerNode) return "merger";
         if (node instanceof OutputNode) return "output";
         if (node instanceof LimiterNode) return "limiter";
-        if (node instanceof FilterNode) return "filter";
+        if (node instanceof VoidNode) return "void";
         if (node instanceof ClusterNode) return "cluster";
+        if (node instanceof LoopNode) return "loop";
         throw new IllegalStateException("Unknown node type: " + node.getClass().getName());
     }
 
@@ -203,8 +213,9 @@ public final class DesignCodecs {
             case "merger"   -> MERGER_NODE;
             case "output"   -> OUTPUT_NODE;
             case "limiter"  -> LIMITER_NODE;
-            case "filter"   -> FILTER_NODE;
+            case "void"     -> VOID_NODE;
             case "cluster"  -> CLUSTER_NODE;
+            case "loop"     -> LOOP_NODE;
             default         -> throw new IllegalArgumentException("Unknown node type: " + name);
         };
     }

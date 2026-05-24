@@ -8,6 +8,7 @@ import dev.kima.cogwheel.CogwheelConstants;
 import dev.kima.cogwheel.model.ClusterNode;
 import dev.kima.cogwheel.model.Design;
 import dev.kima.cogwheel.model.Edge;
+import dev.kima.cogwheel.model.LoopNode;
 import dev.kima.cogwheel.model.Node;
 import dev.kima.cogwheel.model.RecipeNode;
 import dev.kima.cogwheel.model.SinkNode;
@@ -178,6 +179,25 @@ public final class CreateSequencedAssemblyClusterBuilder {
                     finalOutput);
             nodes.add(sink);
             edges.add(new Edge(stepNodes.get(stepNodes.size() - 1).id(), 0, sink.id(), 0, 0.0));
+        }
+
+        // Embed a LoopNode gating the assembled segment when the assembly repeats. The loop sits
+        // BELOW the row of steps; its TWO loop ports (top-left = start, top-right = end) attach
+        // to the first and last step's bottom ports respectively, defining the loop boundary.
+        // Skip when loops <= 1 — a single-iteration cluster doesn't benefit from a visible gate.
+        if (loops > 1 && !stepNodes.isEmpty()) {
+            RecipeNode first = stepNodes.get(0);
+            RecipeNode last = stepNodes.get(stepNodes.size() - 1);
+            // Centered horizontally between first and last; ~100 px below the step row.
+            int loopX = (int) ((first.position().x() + last.position().x()) / 2);
+            int loopY = ROW_Y + 100;
+            LoopNode loop = new LoopNode(UUID.randomUUID(), new Vec2(loopX, loopY), loops);
+            nodes.add(loop);
+            // Loop's port 0 (left/start) → first step's bottom port 0.
+            edges.add(new Edge(loop.id(), 0, first.id(), 0, 0.0, true, true));
+            // Loop's port 1 (right/end) → last step's bottom port 0. If there's only one step
+            // the same step gets both attachments (loop wraps a single step).
+            edges.add(new Edge(loop.id(), 1, last.id(), 0, 0.0, true, true));
         }
 
         Design inner = new Design("Sequenced Assembly", List.copyOf(nodes), List.copyOf(edges));

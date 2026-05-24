@@ -2,8 +2,8 @@ package dev.kima.cogwheel.solver;
 
 import dev.kima.cogwheel.model.Design;
 import dev.kima.cogwheel.model.Edge;
-import dev.kima.cogwheel.model.FilterNode;
 import dev.kima.cogwheel.model.LimiterNode;
+import dev.kima.cogwheel.model.VoidNode;
 import dev.kima.cogwheel.model.MergerNode;
 import dev.kima.cogwheel.model.Node;
 import dev.kima.cogwheel.model.OutputNode;
@@ -71,9 +71,8 @@ public final class Solver {
                 processMerger(design, merger, edgeRates);
             } else if (node instanceof LimiterNode limiter) {
                 processLimiter(design, limiter, edgeRates);
-            } else if (node instanceof FilterNode filter) {
-                processFilter(design, filter, edgeRates);
             }
+            // VoidNode is a pure sink — no pass-through demand to propagate.
         }
 
         // Sinks AND OutputNodes both aggregate their incoming rates as "final outputs". From the
@@ -165,6 +164,7 @@ public final class Solver {
     private static void processSplitter(Design design, SplitterNode splitter, Map<Edge, Double> edgeRates) {
         double sumOutDemand = 0;
         for (Edge e : design.edges()) {
+            if (e.fromBottom()) continue;
             if (e.from().equals(splitter.id())) {
                 sumOutDemand += edgeRates.getOrDefault(e, 0.0);
             }
@@ -182,6 +182,7 @@ public final class Solver {
     private static void processMerger(Design design, MergerNode merger, Map<Edge, Double> edgeRates) {
         double sumOutDemand = 0;
         for (Edge e : design.edges()) {
+            if (e.fromBottom()) continue;
             if (e.from().equals(merger.id())) {
                 sumOutDemand += edgeRates.getOrDefault(e, 0.0);
             }
@@ -209,19 +210,11 @@ public final class Solver {
         if (inEdge != null) edgeRates.put(inEdge, effective);
     }
 
-    /** Filter is wildcard-routed: both outputs together demand from the single input. Solver isn't
-     *  item-aware so it can't preferentially route to the match port — that's planning intent. */
-    private static void processFilter(Design design, FilterNode filter, Map<Edge, Double> edgeRates) {
-        double sumOut = 0;
-        for (Edge e : design.edges()) {
-            if (e.from().equals(filter.id())) sumOut += edgeRates.getOrDefault(e, 0.0);
-        }
-        Edge inEdge = findIncomingEdge(design, filter.id(), 0);
-        if (inEdge != null && sumOut > 0) edgeRates.put(inEdge, sumOut);
-    }
-
     private static Edge findIncomingEdge(Design design, UUID nodeId, int portIndex) {
         for (Edge e : design.edges()) {
+            // Skip loop-gating bottom edges — they share index 0 with regular ports but aren't
+            // material flow, so the solver would otherwise double-count them as input.
+            if (e.toBottom()) continue;
             if (e.to().equals(nodeId) && e.toPort() == portIndex) return e;
         }
         return null;
@@ -229,6 +222,7 @@ public final class Solver {
 
     private static Edge findOutgoingEdge(Design design, UUID nodeId, int portIndex) {
         for (Edge e : design.edges()) {
+            if (e.fromBottom()) continue;
             if (e.from().equals(nodeId) && e.fromPort() == portIndex) return e;
         }
         return null;
@@ -246,6 +240,8 @@ public final class Solver {
         Map<UUID, Integer> inDegree = new HashMap<>();
         for (Node n : design.nodes()) inDegree.put(n.id(), 0);
         for (Edge e : design.edges()) {
+            // Loop-gating bottom edges aren't flow edges; they shouldn't contribute to ordering.
+            if (e.isLoopEdge()) continue;
             Integer cur = inDegree.get(e.to());
             if (cur != null) inDegree.put(e.to(), cur + 1);
         }
@@ -260,6 +256,7 @@ public final class Solver {
             Node n = ready.pop();
             result.add(n);
             for (Edge e : design.edges()) {
+                if (e.isLoopEdge()) continue;
                 if (!e.from().equals(n.id())) continue;
                 int newDeg = inDegree.get(e.to()) - 1;
                 inDegree.put(e.to(), newDeg);

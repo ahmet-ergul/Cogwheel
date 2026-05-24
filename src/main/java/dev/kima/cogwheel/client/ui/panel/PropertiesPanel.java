@@ -1,12 +1,14 @@
 package dev.kima.cogwheel.client.ui.panel;
 
+import dev.kima.cogwheel.client.ui.ScaledUi;
 import dev.kima.cogwheel.client.ui.modal.TextInputModal;
 import dev.kima.cogwheel.client.ui.picker.ExternalOutputPickerScreen;
 import dev.kima.cogwheel.model.Factory;
 import dev.kima.cogwheel.model.FactoryStore;
 import dev.kima.cogwheel.model.ClusterNode;
-import dev.kima.cogwheel.model.FilterNode;
+import dev.kima.cogwheel.model.VoidNode;
 import dev.kima.cogwheel.model.LimiterNode;
+import dev.kima.cogwheel.model.LoopNode;
 import dev.kima.cogwheel.model.MergerNode;
 import dev.kima.cogwheel.model.Node;
 import dev.kima.cogwheel.model.OutputNode;
@@ -107,8 +109,8 @@ public final class PropertiesPanel {
 
         Font font = Minecraft.getInstance().font;
         if (selected == null) {
-            graphics.drawString(font, "Select a node",
-                    panelX + PADDING, panelY + PADDING + 4, TEXT_DIM, false);
+            ScaledUi.drawString(graphics, font, "Select a node",
+                    panelX + PADDING, panelY + PADDING + 4, TEXT_DIM);
             return;
         }
 
@@ -120,9 +122,9 @@ public final class PropertiesPanel {
         if (!selected.icon().isEmpty()) {
             graphics.renderItem(selected.icon(), hx + PADDING, hy + 3);
         }
-        graphics.drawString(font,
-                truncate(font, selected.title().getString(), WIDTH - CLOSE_SIZE - PADDING * 4 - 20),
-                hx + PADDING + 20, hy + 7, TEXT, false);
+        ScaledUi.drawString(graphics, font,
+                ScaledUi.truncate(font, selected.title().getString(), WIDTH - CLOSE_SIZE - PADDING * 4 - 20),
+                hx + PADDING + 20, hy + 7, TEXT);
 
         // Close button in the header.
         int closeX = hx + WIDTH - CLOSE_SIZE - PADDING;
@@ -130,7 +132,7 @@ public final class PropertiesPanel {
         boolean closeHover = mouseX >= closeX && mouseX <= closeX + CLOSE_SIZE
                 && mouseY >= closeY && mouseY < closeY + CLOSE_SIZE;
         if (closeHover) graphics.fill(closeX, closeY, closeX + CLOSE_SIZE, closeY + CLOSE_SIZE, BUTTON_HOVER_BG);
-        graphics.drawString(font, "×", closeX + 3, closeY + 2, TEXT_DIM, false);
+        ScaledUi.drawString(graphics, font,"×", closeX + 3, closeY + 2, TEXT_DIM, false);
 
         int contentY = panelY + HEADER_HEIGHT + PADDING;
         if (selected instanceof SourceNode src) {
@@ -146,7 +148,7 @@ public final class PropertiesPanel {
                     "Outputs: " + splitter.outputCount(),
                     splitter.outputCount(), SplitterNode.MIN_OUTPUTS, SplitterNode.MAX_OUTPUTS);
             int modeRowY = contentY + ROW_HEIGHT + SLIDER_HEIGHT + ROW_HEIGHT + PADDING * 2;
-            graphics.drawString(font, "Mode", panelX + PADDING, modeRowY, TEXT_DIM, false);
+            ScaledUi.drawString(graphics, font,"Mode", panelX + PADDING, modeRowY, TEXT_DIM, false);
             int modeBtnY = modeRowY + ROW_HEIGHT;
             drawButton(graphics, panelX + PADDING, modeBtnY, WIDTH - PADDING * 2, BUTTON_HEIGHT,
                     splitter.mode().name(), mouseX, mouseY);
@@ -156,22 +158,31 @@ public final class PropertiesPanel {
                     merger.inputCount(), MergerNode.MIN_INPUTS, MergerNode.MAX_INPUTS);
         } else if (selected instanceof LimiterNode limiter) {
             renderLimiter(graphics, font, limiter, contentY);
-        } else if (selected instanceof FilterNode filter) {
-            renderFilter(graphics, font, filter, contentY);
+        } else if (selected instanceof VoidNode voidNode) {
+            renderCountSlider(graphics, font, contentY,
+                    "Inputs: " + voidNode.inputCount(),
+                    voidNode.inputCount(), VoidNode.MIN_INPUTS, VoidNode.MAX_INPUTS);
         } else if (selected instanceof ClusterNode cluster) {
             renderCluster(graphics, font, cluster, contentY, mouseX, mouseY);
+        } else if (selected instanceof LoopNode loop) {
+            renderCountSlider(graphics, font, contentY,
+                    "Loops: " + loop.loopCount(),
+                    loop.loopCount(), LoopNode.MIN_LOOPS, LoopNode.MAX_LOOPS);
+            int hintY = contentY + ROW_HEIGHT + SLIDER_HEIGHT + ROW_HEIGHT + PADDING * 2;
+            ScaledUi.drawString(graphics, font, "Connect bottom port to gated", panelX + PADDING, hintY, TEXT_DIM);
+            ScaledUi.drawString(graphics, font, "nodes' bottom ports.", panelX + PADDING, hintY + ROW_HEIGHT, TEXT_DIM);
         }
     }
 
     private void renderCluster(GuiGraphics graphics, Font font, ClusterNode cluster, int y,
                                 int mouseX, int mouseY) {
-        graphics.drawString(font, "Name", panelX + PADDING, y, TEXT_DIM, false);
+        ScaledUi.drawString(graphics, font,"Name", panelX + PADDING, y, TEXT_DIM, false);
         int renameY = y + ROW_HEIGHT;
         drawButton(graphics, panelX + PADDING, renameY, WIDTH - PADDING * 2, BUTTON_HEIGHT,
                 cluster.label().isEmpty() ? "Rename…" : cluster.label(), mouseX, mouseY);
 
         int parY = renameY + BUTTON_HEIGHT + PADDING * 2;
-        graphics.drawString(font, "Parallelism: " + cluster.parallelism(),
+        ScaledUi.drawString(graphics, font,"Parallelism: " + cluster.parallelism(),
                 panelX + PADDING, parY, TEXT, false);
         int sliderY = parY + ROW_HEIGHT;
         renderSlider(graphics, panelX + PADDING, sliderY, WIDTH - PADDING * 2,
@@ -183,14 +194,14 @@ public final class PropertiesPanel {
                 lockLabel, mouseX, mouseY);
 
         int inY = lockY + BUTTON_HEIGHT + PADDING * 2;
-        graphics.drawString(font, "Inputs", panelX + PADDING, inY, TEXT_DIM, false);
+        ScaledUi.drawString(graphics, font,"Inputs", panelX + PADDING, inY, TEXT_DIM, false);
         int rowY = inY + ROW_HEIGHT;
         for (Port p : cluster.inputs()) {
             renderPortRow(graphics, font, p, rowY);
             rowY += ROW_HEIGHT + 2;
         }
         rowY += PADDING;
-        graphics.drawString(font, "Outputs", panelX + PADDING, rowY, TEXT_DIM, false);
+        ScaledUi.drawString(graphics, font,"Outputs", panelX + PADDING, rowY, TEXT_DIM, false);
         rowY += ROW_HEIGHT;
         for (Port p : cluster.outputs()) {
             renderPortRow(graphics, font, p, rowY);
@@ -200,32 +211,14 @@ public final class PropertiesPanel {
 
     private void renderLimiter(GuiGraphics graphics, Font font, LimiterNode limiter, int y) {
         String label = "Limit: " + formatRate(limiter.limitPerMin()) + "/min";
-        graphics.drawString(font, label, panelX + PADDING, y, TEXT, false);
+        ScaledUi.drawString(graphics, font,label, panelX + PADDING, y, TEXT, false);
         int sliderY = y + ROW_HEIGHT;
         renderLogSlider(graphics, panelX + PADDING, sliderY, WIDTH - PADDING * 2,
                 limiter.limitPerMin(), LimiterNode.MIN_LIMIT, LimiterNode.MAX_LIMIT);
-        graphics.drawString(font, "Range: " + (int) LimiterNode.MIN_LIMIT + "–" + (int) LimiterNode.MAX_LIMIT,
+        ScaledUi.drawString(graphics, font,"Range: " + (int) LimiterNode.MIN_LIMIT + "–" + (int) LimiterNode.MAX_LIMIT,
                 panelX + PADDING, sliderY + SLIDER_HEIGHT + PADDING, TEXT_DIM, false);
-        graphics.drawString(font, "Excess is voided.",
+        ScaledUi.drawString(graphics, font,"Excess is voided.",
                 panelX + PADDING, sliderY + SLIDER_HEIGHT + PADDING + ROW_HEIGHT, TEXT_DIM, false);
-    }
-
-    private void renderFilter(GuiGraphics graphics, Font font, FilterNode filter, int y) {
-        graphics.drawString(font, "Matches", panelX + PADDING, y, TEXT_DIM, false);
-        int itemY = y + ROW_HEIGHT;
-        if (!filter.matchItem().isEmpty()) {
-            graphics.renderItem(filter.matchItem(), panelX + PADDING, itemY);
-            graphics.drawString(font, filter.matchItem().getHoverName().getString(),
-                    panelX + PADDING + 20, itemY + 4, TEXT, false);
-        } else {
-            graphics.drawString(font, "(none — set via right-click on canvas)",
-                    panelX + PADDING, itemY + 4, TEXT_DIM, false);
-        }
-        int hintY = itemY + ROW_HEIGHT * 2;
-        graphics.drawString(font, "Out 0: match → carries this item",
-                panelX + PADDING, hintY, TEXT_DIM, false);
-        graphics.drawString(font, "Out 1: reject → everything else",
-                panelX + PADDING, hintY + ROW_HEIGHT, TEXT_DIM, false);
     }
 
     /** Vertical space the JEI preview occupies above the rest of the RecipeNode props. */
@@ -252,21 +245,21 @@ public final class PropertiesPanel {
     }
 
     private void renderSource(GuiGraphics graphics, Font font, SourceNode src, int y, int mouseX, int mouseY) {
-        graphics.drawString(font, "Kind", panelX + PADDING, y, TEXT_DIM, false);
+        ScaledUi.drawString(graphics, font,"Kind", panelX + PADDING, y, TEXT_DIM, false);
         int btnY = y + ROW_HEIGHT;
         drawButton(graphics, panelX + PADDING, btnY, WIDTH - PADDING * 2, BUTTON_HEIGHT,
                 src.kind().name(), mouseX, mouseY);
 
         int itemY = btnY + BUTTON_HEIGHT + PADDING * 2;
-        graphics.drawString(font, "Item", panelX + PADDING, itemY, TEXT_DIM, false);
+        ScaledUi.drawString(graphics, font,"Item", panelX + PADDING, itemY, TEXT_DIM, false);
         graphics.renderItem(src.item(), panelX + PADDING, itemY + ROW_HEIGHT);
-        graphics.drawString(font, src.item().getHoverName().getString(),
+        ScaledUi.drawString(graphics, font,src.item().getHoverName().getString(),
                 panelX + PADDING + 20, itemY + ROW_HEIGHT + 4, TEXT, false);
 
         // EXTERNAL_FACTORY sources get a bind-to-output panel.
         if (src.kind() == SourceNode.Kind.EXTERNAL_FACTORY) {
             int refY = itemY + ROW_HEIGHT * 2 + PADDING * 2;
-            graphics.drawString(font, "External Output", panelX + PADDING, refY, TEXT_DIM, false);
+            ScaledUi.drawString(graphics, font,"External Output", panelX + PADDING, refY, TEXT_DIM, false);
             String refText = src.externalRef()
                     .map(ref -> {
                         Factory f = FactoryStore.get().findById(ref.factoryId());
@@ -275,7 +268,7 @@ public final class PropertiesPanel {
                         return f.name() + " · " + out.map(OutputNode::exportName).orElse("(missing)");
                     })
                     .orElse("Not bound");
-            graphics.drawString(font, truncate(font, refText, WIDTH - PADDING * 2),
+            ScaledUi.drawString(graphics, font, ScaledUi.truncate(font,refText, WIDTH - PADDING * 2),
                     panelX + PADDING, refY + ROW_HEIGHT, TEXT, false);
             int refBtnY = refY + ROW_HEIGHT * 2;
             drawButton(graphics, panelX + PADDING, refBtnY, WIDTH - PADDING * 2, BUTTON_HEIGHT,
@@ -284,20 +277,20 @@ public final class PropertiesPanel {
     }
 
     private void renderOutput(GuiGraphics graphics, Font font, OutputNode out, int y, int mouseX, int mouseY) {
-        graphics.drawString(font, "Export name", panelX + PADDING, y, TEXT_DIM, false);
+        ScaledUi.drawString(graphics, font,"Export name", panelX + PADDING, y, TEXT_DIM, false);
         int btnY = y + ROW_HEIGHT;
         String label = out.exportName().isEmpty() ? "(rename…)" : out.exportName();
         drawButton(graphics, panelX + PADDING, btnY, WIDTH - PADDING * 2, BUTTON_HEIGHT,
                 label, mouseX, mouseY);
 
         int itemY = btnY + BUTTON_HEIGHT + PADDING * 2;
-        graphics.drawString(font, "Item", panelX + PADDING, itemY, TEXT_DIM, false);
+        ScaledUi.drawString(graphics, font,"Item", panelX + PADDING, itemY, TEXT_DIM, false);
         graphics.renderItem(out.item(), panelX + PADDING, itemY + ROW_HEIGHT);
-        graphics.drawString(font, out.item().getHoverName().getString(),
+        ScaledUi.drawString(graphics, font,out.item().getHoverName().getString(),
                 panelX + PADDING + 20, itemY + ROW_HEIGHT + 4, TEXT, false);
 
         int hintY = itemY + ROW_HEIGHT * 2 + PADDING * 2;
-        graphics.drawString(font, "Exposed to other factories",
+        ScaledUi.drawString(graphics, font,"Exposed to other factories",
                 panelX + PADDING, hintY, TEXT_DIM, false);
     }
 
@@ -319,7 +312,7 @@ public final class PropertiesPanel {
                     previewX, previewY, previewW, previewH, mouseX, mouseY);
             y += previewH + PADDING;
         }
-        graphics.drawString(font, "Parallelism: " + rn.parallelism(),
+        ScaledUi.drawString(graphics, font,"Parallelism: " + rn.parallelism(),
                 panelX + PADDING, y, TEXT, false);
         int sliderY = y + ROW_HEIGHT;
         renderSlider(graphics, panelX + PADDING, sliderY, WIDTH - PADDING * 2,
@@ -330,7 +323,7 @@ public final class PropertiesPanel {
                 "Swap recipe…", mouseX, mouseY);
 
         int inY = btnY + BUTTON_HEIGHT + PADDING * 2;
-        graphics.drawString(font, "Inputs", panelX + PADDING, inY, TEXT_DIM, false);
+        ScaledUi.drawString(graphics, font,"Inputs", panelX + PADDING, inY, TEXT_DIM, false);
         int rowY = inY + ROW_HEIGHT;
         List<IngredientStack> origInputs = lookupOriginalInputs(rn);
         for (Port p : rn.inputs()) {
@@ -342,7 +335,7 @@ public final class PropertiesPanel {
         }
 
         rowY += PADDING;
-        graphics.drawString(font, "Outputs", panelX + PADDING, rowY, TEXT_DIM, false);
+        ScaledUi.drawString(graphics, font,"Outputs", panelX + PADDING, rowY, TEXT_DIM, false);
         rowY += ROW_HEIGHT;
         for (Port p : rn.outputs()) {
             renderPortRow(graphics, font, p, rowY);
@@ -368,29 +361,29 @@ public final class PropertiesPanel {
             graphics.renderItem(port.display(), panelX + PADDING, y);
         }
         int labelMax = WIDTH - 22 - PADDING * 2 - cycleW;
-        graphics.drawString(font, truncate(font, port.label(), labelMax),
+        ScaledUi.drawString(graphics, font, ScaledUi.truncate(font,port.label(), labelMax),
                 panelX + PADDING + 20, y + 4, TEXT, false);
         if (hasCycle) {
             int bx = panelX + WIDTH - PADDING - cycleW;
             boolean hover = mouseX >= bx && mouseX < bx + cycleW && mouseY >= y && mouseY < y + ROW_HEIGHT;
             if (hover) graphics.fill(bx, y, bx + cycleW, y + ROW_HEIGHT, BUTTON_HOVER_BG);
-            graphics.drawString(font, "›", bx + 4, y + 4, TEXT, false);
+            ScaledUi.drawString(graphics, font,"›", bx + 4, y + 4, TEXT, false);
         }
     }
 
     private void renderSink(GuiGraphics graphics, Font font, SinkNode sn, int y) {
-        graphics.drawString(font, "Item", panelX + PADDING, y, TEXT_DIM, false);
+        ScaledUi.drawString(graphics, font,"Item", panelX + PADDING, y, TEXT_DIM, false);
         graphics.renderItem(sn.item(), panelX + PADDING, y + ROW_HEIGHT);
-        graphics.drawString(font, sn.item().getHoverName().getString(),
+        ScaledUi.drawString(graphics, font,sn.item().getHoverName().getString(),
                 panelX + PADDING + 20, y + ROW_HEIGHT + 4, TEXT, false);
     }
 
     /** Shared rendering for Splitter outputCount and Merger inputCount sliders. */
     private void renderCountSlider(GuiGraphics graphics, Font font, int y, String label, int value, int min, int max) {
-        graphics.drawString(font, label, panelX + PADDING, y, TEXT, false);
+        ScaledUi.drawString(graphics, font,label, panelX + PADDING, y, TEXT, false);
         int sliderY = y + ROW_HEIGHT;
         renderSlider(graphics, panelX + PADDING, sliderY, WIDTH - PADDING * 2, value, min, max);
-        graphics.drawString(font, "Range: " + min + "–" + max,
+        ScaledUi.drawString(graphics, font,"Range: " + min + "–" + max,
                 panelX + PADDING, sliderY + SLIDER_HEIGHT + PADDING, TEXT_DIM, false);
     }
 
@@ -398,7 +391,7 @@ public final class PropertiesPanel {
         if (!port.display().isEmpty()) {
             graphics.renderItem(port.display(), panelX + PADDING, y);
         }
-        graphics.drawString(font, truncate(font, port.label(), WIDTH - 22 - PADDING * 2),
+        ScaledUi.drawString(graphics, font, ScaledUi.truncate(font,port.label(), WIDTH - 22 - PADDING * 2),
                 panelX + PADDING + 20, y + 4, TEXT, false);
     }
 
@@ -414,8 +407,8 @@ public final class PropertiesPanel {
         boolean hover = mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY < y + h;
         graphics.fill(x, y, x + w, y + h, hover ? BUTTON_HOVER_BG : BUTTON_BG);
         Font font = Minecraft.getInstance().font;
-        int textWidth = font.width(label);
-        graphics.drawString(font, label, x + (w - textWidth) / 2, y + (h - 8) / 2, TEXT, false);
+        int textWidth = ScaledUi.scaledWidth(font, label);
+        ScaledUi.drawString(graphics, font, label, x + (w - textWidth) / 2, y + (h - 8) / 2, TEXT);
     }
 
     public boolean mouseClicked(double sx, double sy, int button) {
@@ -513,7 +506,8 @@ public final class PropertiesPanel {
                 onNodeUpdated.accept(splitter.withMode(modes[next]));
                 return true;
             }
-        } else if (selected instanceof MergerNode || selected instanceof LimiterNode) {
+        } else if (selected instanceof MergerNode || selected instanceof LimiterNode
+                || selected instanceof VoidNode || selected instanceof LoopNode) {
             int sliderY = contentY + ROW_HEIGHT;
             if (hits(sx, sy, panelX + PADDING, sliderY, WIDTH - PADDING * 2, SLIDER_HEIGHT)) {
                 draggingSlider = true;
@@ -596,6 +590,18 @@ public final class PropertiesPanel {
             double v = LimiterNode.MIN_LIMIT * Math.pow(LimiterNode.MAX_LIMIT / LimiterNode.MIN_LIMIT, frac);
             if (Math.abs(v - limiter.limitPerMin()) > 0.01) {
                 onNodeUpdated.accept(limiter.withLimit(v));
+            }
+        } else if (selected instanceof VoidNode voidNode) {
+            int newValue = (int) Math.round(VoidNode.MIN_INPUTS
+                    + frac * (VoidNode.MAX_INPUTS - VoidNode.MIN_INPUTS));
+            if (newValue != voidNode.inputCount()) {
+                onNodeUpdated.accept(voidNode.withInputCount(newValue));
+            }
+        } else if (selected instanceof LoopNode loop) {
+            int newValue = (int) Math.round(LoopNode.MIN_LOOPS
+                    + frac * (LoopNode.MAX_LOOPS - LoopNode.MIN_LOOPS));
+            if (newValue != loop.loopCount()) {
+                onNodeUpdated.accept(loop.withLoopCount(newValue));
             }
         } else if (selected instanceof ClusterNode cluster) {
             int newValue = (int) Math.round(PARALLELISM_MIN + frac * (PARALLELISM_MAX - PARALLELISM_MIN));

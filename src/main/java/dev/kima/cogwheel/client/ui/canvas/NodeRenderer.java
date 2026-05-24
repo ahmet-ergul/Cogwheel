@@ -23,11 +23,15 @@ public final class NodeRenderer {
     public static final int HEADER_HEIGHT = 16;
     public static final int PORT_ROW_HEIGHT = 16;
     public static final int PORT_DOT_RADIUS = 3;
-    /** Scale factor applied to item icons and node title text. Items render at 16 px natively;
-     *  at 0.8 they're ~13 px — noticeably smaller without becoming illegible. Text is the vanilla
-     *  9-px font scaled the same way. */
-    private static final float CONTENT_SCALE = 0.8f;
-    private static final int ICON_PX = Math.round(16 * CONTENT_SCALE);
+    /** Default scale factor applied to item icons and node title text. Overridable via the
+     *  Settings page ({@code CONTENT_SCALE}). Items render at 16 px natively; at 0.8 they're
+     *  ~13 px — readable without taking too much canvas. Reads live so settings tweaks apply
+     *  without a restart. */
+    private static float contentScale() {
+        return dev.kima.cogwheel.settings.CogwheelSettings.get()
+                .num(dev.kima.cogwheel.settings.CogwheelSettings.NumKey.CONTENT_SCALE);
+    }
+    private static int iconPx() { return Math.round(16 * contentScale()); }
 
     public static final int BG_COLOR    = 0xF21F2233;
     public static final int BG_DEEP     = 0xF21A1E2A; // slightly darker body bottom for depth
@@ -47,11 +51,19 @@ public final class NodeRenderer {
     public static final int PORT_ITEM_RING = 0xFF9A7842;
     public static final int PORT_FLUID  = 0xFF6EBBE8;
     public static final int PORT_FLUID_RING = 0xFF457999;
+    public static final int PORT_LOOP   = 0xFFB89AE8; // violet, matches CLUSTER_BORDER family
+    public static final int PORT_LOOP_RING = 0xFF5E4D7A;
     public static final int TEXT        = 0xFFEAEAEA;
 
     private NodeRenderer() {}
 
     public static int heightOf(Node node) {
+        // LoopNode is a compact gate — no input/output rows. Reserve room for: header (title) +
+        // one row for the "×N" loop-count line below. Bottom ports here render at the TOP edge,
+        // so no extra bottom padding needed.
+        if (node instanceof dev.kima.cogwheel.model.LoopNode) {
+            return HEADER_HEIGHT + PORT_ROW_HEIGHT + 6;
+        }
         int portRows = Math.max(node.inputs().size(), node.outputs().size());
         return HEADER_HEIGHT + Math.max(1, portRows) * PORT_ROW_HEIGHT + 6;
     }
@@ -63,6 +75,29 @@ public final class NodeRenderer {
         Vec2 pos = node.position();
         int x = (int) pos.x() + (output ? NODE_WIDTH : 0);
         int y = (int) pos.y() + HEADER_HEIGHT + 6 + portIndex * PORT_ROW_HEIGHT + PORT_ROW_HEIGHT / 2;
+        return new Vec2(x, y);
+    }
+
+    /** World-space center of one of a node's loop-control ports. Returns {@code null} if the index
+     *  is out of range for this node's {@link Node#bottomPorts()} list.
+     *
+     *  <p>Geometry: a {@link dev.kima.cogwheel.model.LoopNode} renders its two ports on the TOP
+     *  edge (left + right corners) because it visually sits BELOW the chain it gates. All other
+     *  gateable nodes render their single port at the BOTTOM-CENTER. */
+    public static Vec2 bottomPortCenter(Node node, int portIndex) {
+        java.util.List<Port> ports = node.bottomPorts();
+        if (portIndex < 0 || portIndex >= ports.size()) return null;
+        Vec2 pos = node.position();
+        if (node instanceof dev.kima.cogwheel.model.LoopNode) {
+            // Two ports on the top edge — index 0 = left, index 1 = right.
+            int inset = 10;
+            int x = (int) pos.x() + (portIndex == 0 ? inset : NODE_WIDTH - inset);
+            int y = (int) pos.y();
+            return new Vec2(x, y);
+        }
+        // Default: single port at bottom-center.
+        int x = (int) pos.x() + NODE_WIDTH / 2;
+        int y = (int) pos.y() + heightOf(node);
         return new Vec2(x, y);
     }
 
@@ -84,16 +119,25 @@ public final class NodeRenderer {
         }
 
         // Body with chamfered corners: 1-px corners knocked out so it looks faintly rounded.
-        // Two overlapping rects achieve the chamfer in 2 fills.
-        graphics.fill(x + 1, y, x + w - 1, y + h, BG_DEEP);   // tall band
-        graphics.fill(x, y + 1, x + w, y + h - 1, BG_COLOR);  // wide band (covers more area)
+        // Colors pulled from settings so the user can recolor everything from the Settings page.
+        var st = dev.kima.cogwheel.settings.CogwheelSettings.get();
+        int nodeBg = st.color(dev.kima.cogwheel.settings.CogwheelSettings.Key.NODE_BG);
+        graphics.fill(x + 1, y, x + w - 1, y + h, BG_DEEP);
+        graphics.fill(x, y + 1, x + w, y + h - 1, nodeBg);
 
-        // Cluster nodes get a violet border + header to set them apart from regular nodes.
         boolean isCluster = node instanceof ClusterNode;
-        int defaultBorder = isCluster ? CLUSTER_BORDER : BORDER;
-        int borderColor = selected ? BORDER_SELECTED : defaultBorder;
-        int headerTop = isCluster ? CLUSTER_HEADER_TOP : HEADER_BG_TOP;
-        int headerBottom = isCluster ? CLUSTER_HEADER_BOTTOM : HEADER_BG_BOTTOM;
+        int defaultBorder = isCluster
+                ? st.color(dev.kima.cogwheel.settings.CogwheelSettings.Key.CLUSTER_BORDER)
+                : st.color(dev.kima.cogwheel.settings.CogwheelSettings.Key.NODE_BORDER);
+        int borderColor = selected
+                ? st.color(dev.kima.cogwheel.settings.CogwheelSettings.Key.NODE_BORDER_SEL)
+                : defaultBorder;
+        int headerTop = isCluster
+                ? st.color(dev.kima.cogwheel.settings.CogwheelSettings.Key.CLUSTER_HDR_TOP)
+                : st.color(dev.kima.cogwheel.settings.CogwheelSettings.Key.NODE_HEADER_TOP);
+        int headerBottom = isCluster
+                ? st.color(dev.kima.cogwheel.settings.CogwheelSettings.Key.CLUSTER_HDR_BOT)
+                : st.color(dev.kima.cogwheel.settings.CogwheelSettings.Key.NODE_HEADER_BOT);
 
         graphics.fill(x + 1, y, x + w - 1, y + 1, borderColor);                 // top
         graphics.fill(x + 1, y + h - 1, x + w - 1, y + h, borderColor);         // bottom
@@ -108,7 +152,7 @@ public final class NodeRenderer {
         if (!node.icon().isEmpty()) {
             renderScaledItem(graphics, node.icon(), x + 2, y + 2);
         }
-        int titleX = x + ICON_PX + 4;
+        int titleX = x + iconPx() + 4;
         // Tiny lock glyph on locked clusters — reserved space on the right edge of the header.
         int rightReserve = 0;
         if (node instanceof ClusterNode cn && cn.kind() == ClusterNode.Kind.LOCKED) {
@@ -116,7 +160,7 @@ public final class NodeRenderer {
             int lockX = x + w - 9;
             graphics.drawString(font, "🔒", lockX, y + 4, 0xFFEAEAEA, false);
         }
-        int scaledTitleMax = (int) ((w - titleX + x - rightReserve) / CONTENT_SCALE);
+        int scaledTitleMax = (int) ((w - titleX + x - rightReserve) / contentScale());
         renderScaledText(graphics, font, truncate(font, node.title().getString(), scaledTitleMax),
                 titleX, y + 5, TEXT);
 
@@ -148,6 +192,33 @@ public final class NodeRenderer {
             int count = lookupOutputCount(entry, p.index(), effective);
             renderPort(graphics, font, node, p, true, effective, count);
         }
+
+        // Loop-control ports — small violet dots. Geometry per port:
+        //  - LoopNode: top-left + top-right corners
+        //  - All others: bottom-center
+        for (int i = 0; i < node.bottomPorts().size(); i++) {
+            renderBottomPortAt(graphics, node, i);
+        }
+
+        // LoopNode also shows the iteration count "×N" below its title line.
+        if (node instanceof dev.kima.cogwheel.model.LoopNode loop) {
+            String countStr = "×" + loop.loopCount();
+            int countWidth = (int) (font.width(countStr) * contentScale());
+            int cx = x + (w - countWidth) / 2;
+            int cy = y + HEADER_HEIGHT + 4;
+            renderScaledText(graphics, font, countStr, cx, cy, TEXT);
+        }
+    }
+
+    private static void renderBottomPortAt(GuiGraphics graphics, Node node, int portIndex) {
+        Vec2 center = bottomPortCenter(node, portIndex);
+        if (center == null) return;
+        int cx = (int) center.x();
+        int cy = (int) center.y();
+        int r = PORT_DOT_RADIUS;
+        graphics.fill(cx - r + 1, cy - r, cx + r - 1, cy + r, PORT_LOOP_RING);
+        graphics.fill(cx - r, cy - r + 1, cx + r, cy + r - 1, PORT_LOOP_RING);
+        graphics.fill(cx - r + 1, cy - r + 1, cx + r - 1, cy + r - 1, PORT_LOOP);
     }
 
     private static int lookupInputCount(RecipeEntry entry, int portIndex) {
@@ -187,8 +258,9 @@ public final class NodeRenderer {
         // Item icon next to the dot, inside the node body. effectiveDisplay falls back to
         // Port.display() if the resolver couldn't infer anything (e.g. unconnected wildcard).
         int gap = 3;
-        int iconX = output ? cx - PORT_DOT_RADIUS - gap - ICON_PX : cx + PORT_DOT_RADIUS + gap;
-        int iconY = cy - ICON_PX / 2;
+        int ipx = iconPx();
+        int iconX = output ? cx - PORT_DOT_RADIUS - gap - ipx : cx + PORT_DOT_RADIUS + gap;
+        int iconY = cy - ipx / 2;
         ItemStack toRender = effectiveDisplay.isEmpty() ? port.display() : effectiveDisplay;
         if (!toRender.isEmpty()) {
             renderScaledItem(graphics, toRender, iconX, iconY);
@@ -204,7 +276,7 @@ public final class NodeRenderer {
         var pose = graphics.pose();
         pose.pushPose();
         pose.translate(x, y, 0);
-        pose.scale(CONTENT_SCALE, CONTENT_SCALE, 1f);
+        pose.scale(contentScale(), contentScale(), 1f);
         graphics.renderItem(stack, 0, 0);
         pose.popPose();
     }
@@ -214,7 +286,7 @@ public final class NodeRenderer {
         var pose = graphics.pose();
         pose.pushPose();
         pose.translate(x, y, 0);
-        pose.scale(CONTENT_SCALE, CONTENT_SCALE, 1f);
+        pose.scale(contentScale(), contentScale(), 1f);
         graphics.renderItemDecorations(font, stack, 0, 0, text);
         pose.popPose();
     }
@@ -224,7 +296,7 @@ public final class NodeRenderer {
         var pose = graphics.pose();
         pose.pushPose();
         pose.translate(x, y, 0);
-        pose.scale(CONTENT_SCALE, CONTENT_SCALE, 1f);
+        pose.scale(contentScale(), contentScale(), 1f);
         graphics.drawString(font, text, 0, 0, color, false);
         pose.popPose();
     }

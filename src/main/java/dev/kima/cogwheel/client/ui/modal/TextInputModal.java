@@ -52,8 +52,7 @@ public final class TextInputModal extends Screen {
                 PANEL_WIDTH - PADDING * 2, 18, prompt);
         input.setMaxLength(64);
         input.setValue(initialValue);
-        input.setFocused(true);
-        this.setInitialFocus(input);
+        input.moveCursorToEnd(false);
         addRenderableWidget(input);
 
         // OK + Cancel buttons.
@@ -62,6 +61,11 @@ public final class TextInputModal extends Screen {
                 .bounds(panelX + PANEL_WIDTH - PADDING - 80, buttonY, 80, 20).build());
         addRenderableWidget(Button.builder(CommonComponents.GUI_CANCEL, b -> cancel())
                 .bounds(panelX + PADDING, buttonY, 80, 20).build());
+
+        // Vanilla screen focus is set AFTER all widgets are registered — otherwise the later
+        // buttons "win" and the EditBox doesn't receive keystrokes until a click.
+        setInitialFocus(input);
+        input.setFocused(true);
     }
 
     @Override

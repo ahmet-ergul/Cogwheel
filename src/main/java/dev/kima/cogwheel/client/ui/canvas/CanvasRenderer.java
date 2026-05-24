@@ -15,8 +15,8 @@ import net.minecraft.client.gui.GuiGraphics;
  * drawing to the viewport so canvas content doesn't bleed into future side panels.
  */
 public final class CanvasRenderer {
+    /** Defaults — actual values pulled per frame from {@link dev.kima.cogwheel.settings.CogwheelSettings}. */
     public static final int BG_COLOR = 0xFF1A1E2A;
-    /** Slightly more muted/gray background for locked cluster views — visually conveys "read-only". */
     public static final int BG_LOCKED = 0xFF222632;
 
     private CanvasRenderer() {}
@@ -28,8 +28,11 @@ public final class CanvasRenderer {
 
     public static void render(GuiGraphics graphics, Canvas canvas, Design design,
                               int x, int y, int w, int h, boolean lockedBackground) {
-        // Background panel (always under scissor — drawn before transform).
-        graphics.fill(x, y, x + w, y + h, lockedBackground ? BG_LOCKED : BG_COLOR);
+        int bg = dev.kima.cogwheel.settings.CogwheelSettings.c(
+                lockedBackground
+                        ? dev.kima.cogwheel.settings.CogwheelSettings.Key.CANVAS_BG_LOCKED
+                        : dev.kima.cogwheel.settings.CogwheelSettings.Key.CANVAS_BG);
+        graphics.fill(x, y, x + w, y + h, bg);
 
         // Resolve effective port displays once per frame so the Splitter/Merger wildcard ports
         // visually adopt whatever item is flowing through them.

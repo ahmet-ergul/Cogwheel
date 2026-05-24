@@ -70,6 +70,11 @@ public record ClusterNode(
     }
 
     @Override
+    public List<Port> bottomPorts() {
+        return List.of(new Port(0, PortType.LOOP, "loop", ItemStack.EMPTY));
+    }
+
+    @Override
     public ItemStack icon() {
         // First output's item makes the most intuitive icon; fall back to a generic mark.
         for (Node n : innerDesign.nodes()) {

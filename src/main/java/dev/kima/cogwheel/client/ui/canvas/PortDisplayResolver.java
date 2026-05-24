@@ -2,7 +2,6 @@ package dev.kima.cogwheel.client.ui.canvas;
 
 import dev.kima.cogwheel.model.Design;
 import dev.kima.cogwheel.model.Edge;
-import dev.kima.cogwheel.model.FilterNode;
 import dev.kima.cogwheel.model.LimiterNode;
 import dev.kima.cogwheel.model.MergerNode;
 import dev.kima.cogwheel.model.Node;
@@ -69,9 +68,8 @@ public final class PortDisplayResolver {
                 propagateMerger(merger);
             } else if (node instanceof LimiterNode limiter) {
                 propagatePassthrough(limiter.id());
-            } else if (node instanceof FilterNode filter) {
-                propagateFilter(filter);
             }
+            // VoidNode has no outputs; nothing to propagate.
         }
     }
 
@@ -85,19 +83,6 @@ public final class PortDisplayResolver {
         if (outputs[0] == null || outputs[0].isEmpty()) outputs[0] = inDisp;
     }
 
-    /** Filter: out[0] keeps the configured matchItem (already set in Port.display); out[1] (reject)
-     *  inherits the input. If matchItem isn't set yet, both outputs inherit. */
-    private void propagateFilter(FilterNode filter) {
-        ItemStack[] inputs = inputDisplays.get(filter.id());
-        ItemStack[] outputs = outputDisplays.get(filter.id());
-        if (inputs == null || outputs == null || inputs.length == 0) return;
-        ItemStack inDisp = inputs[0];
-        if (inDisp == null || inDisp.isEmpty()) return;
-        // Reject port (index 1) is wildcard — inherits input.
-        if (outputs.length > 1 && (outputs[1] == null || outputs[1].isEmpty())) outputs[1] = inDisp;
-        // Match port (index 0) is wildcard ONLY if no matchItem set yet — fall back to input.
-        if (outputs.length > 0 && (outputs[0] == null || outputs[0].isEmpty())) outputs[0] = inDisp;
-    }
 
     public ItemStack inputDisplay(UUID nodeId, int portIndex) {
         return get(inputDisplays, nodeId, portIndex);
