@@ -31,6 +31,8 @@
   "screen.cogwheel.logic.limiter.subtitle": "Cap flow; excess voided",
   "screen.cogwheel.logic.filter": "Filter",
   "screen.cogwheel.logic.filter.subtitle": "Route one item; reject the rest",
+  "screen.cogwheel.logic.cluster": "Cluster",
+  "screen.cogwheel.logic.cluster.subtitle": "Group nodes into a container",
 
   "node.cogwheel.source.manual": "Source",
   "node.cogwheel.source.external_factory": "External Factory",

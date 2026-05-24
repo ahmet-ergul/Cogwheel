@@ -16,13 +16,20 @@ import net.minecraft.client.gui.GuiGraphics;
  */
 public final class CanvasRenderer {
     public static final int BG_COLOR = 0xFF1A1E2A;
+    /** Slightly more muted/gray background for locked cluster views — visually conveys "read-only". */
+    public static final int BG_LOCKED = 0xFF222632;
 
     private CanvasRenderer() {}
 
     public static void render(GuiGraphics graphics, Canvas canvas, Design design,
                               int x, int y, int w, int h) {
+        render(graphics, canvas, design, x, y, w, h, false);
+    }
+
+    public static void render(GuiGraphics graphics, Canvas canvas, Design design,
+                              int x, int y, int w, int h, boolean lockedBackground) {
         // Background panel (always under scissor — drawn before transform).
-        graphics.fill(x, y, x + w, y + h, BG_COLOR);
+        graphics.fill(x, y, x + w, y + h, lockedBackground ? BG_LOCKED : BG_COLOR);
 
         // Resolve effective port displays once per frame so the Splitter/Merger wildcard ports
         // visually adopt whatever item is flowing through them.

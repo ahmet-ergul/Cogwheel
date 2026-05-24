@@ -52,7 +52,8 @@ public final class LeftPanel {
             Runnable onRefreshFactories,
             Runnable onOpenFactoriesFolder,
             Runnable onAddLimiter,
-            Runnable onAddFilter
+            Runnable onAddFilter,
+            Runnable onAddCluster
     ) {}
 
     /** Mutable so the panel survives a parent-screen re-init: the WidgetHost is bound to a Screen
@@ -355,7 +356,13 @@ public final class LeftPanel {
                                 Component.translatable("screen.cogwheel.logic.filter"),
                                 Component.translatable("screen.cogwheel.logic.filter.subtitle"),
                                 true,
-                                () -> callbacks.onAddFilter().run())
+                                () -> callbacks.onAddFilter().run()),
+                        new CategoriesPage.Category(
+                                new ItemStack(Items.BUNDLE),
+                                Component.translatable("screen.cogwheel.logic.cluster"),
+                                Component.translatable("screen.cogwheel.logic.cluster.subtitle"),
+                                true,
+                                () -> callbacks.onAddCluster().run())
                 ));
     }
 

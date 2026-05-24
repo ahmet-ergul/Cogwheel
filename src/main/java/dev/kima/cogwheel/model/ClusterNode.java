@@ -100,4 +100,8 @@ public record ClusterNode(
     public ClusterNode withParallelism(int newParallelism) {
         return new ClusterNode(id, position, label, innerDesign, kind, newParallelism);
     }
+
+    public ClusterNode withKind(Kind newKind) {
+        return new ClusterNode(id, position, label, innerDesign, newKind, parallelism);
+    }
 }

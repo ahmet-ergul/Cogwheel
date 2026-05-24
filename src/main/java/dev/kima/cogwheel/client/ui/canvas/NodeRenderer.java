@@ -109,7 +109,14 @@ public final class NodeRenderer {
             renderScaledItem(graphics, node.icon(), x + 2, y + 2);
         }
         int titleX = x + ICON_PX + 4;
-        int scaledTitleMax = (int) ((w - titleX + x) / CONTENT_SCALE);
+        // Tiny lock glyph on locked clusters — reserved space on the right edge of the header.
+        int rightReserve = 0;
+        if (node instanceof ClusterNode cn && cn.kind() == ClusterNode.Kind.LOCKED) {
+            rightReserve = 10;
+            int lockX = x + w - 9;
+            graphics.drawString(font, "🔒", lockX, y + 4, 0xFFEAEAEA, false);
+        }
+        int scaledTitleMax = (int) ((w - titleX + x - rightReserve) / CONTENT_SCALE);
         renderScaledText(graphics, font, truncate(font, node.title().getString(), scaledTitleMax),
                 titleX, y + 5, TEXT);
 

@@ -86,9 +86,12 @@ public class EditorScreen extends Screen {
     /** Stack of (parent design, cluster id, cluster label) while navigating into ClusterNodes.
      *  Empty when viewing the top-level factory design. Inside a cluster, edits to the design field
      *  don't propagate to the FactoryStore (LOCKED clusters are view-only). */
-    private record ClusterFrame(Design parentDesign, UUID clusterId, String clusterLabel) {}
+    private record ClusterFrame(Design parentDesign, UUID clusterId, String clusterLabel, ClusterNode.Kind kind) {}
     private final java.util.ArrayDeque<ClusterFrame> clusterStack = new java.util.ArrayDeque<>();
     private boolean inCluster() { return !clusterStack.isEmpty(); }
+    private boolean inLockedCluster() {
+        return inCluster() && clusterStack.peek().kind() == ClusterNode.Kind.LOCKED;
+    }
     /** Last left-click on a node — used to detect double-click within {@link #DOUBLE_CLICK_MS}. */
     private UUID lastClickedNodeId = null;
     private long lastClickedAt = 0;
@@ -154,7 +157,8 @@ public class EditorScreen extends Screen {
                             this::refreshFactories,
                             FactoryFileStore::openFactoriesFolder,
                             this::addLimiterNode,
-                            this::addFilterNode),
+                            this::addFilterNode,
+                            this::addClusterNode),
                     null);
             leftPanel.open();
         } else {
@@ -168,18 +172,46 @@ public class EditorScreen extends Screen {
      *  Per-file auto-save keeps {@code cogwheel/factories/<name>.json} consistent with in-memory
      *  state so users can share factories without thinking about Ctrl+S.
      *
-     *  <p>Inside a cluster view, edits are local — they don't propagate to the FactoryStore.
-     *  LOCKED clusters are effectively view-only; any in-progress changes are discarded on exit. */
+     *  <p>Inside a USER cluster, edits walk the cluster stack rebuilding each parent design (each
+     *  cluster has its {@code innerDesign} replaced with the level below). LOCKED clusters block
+     *  propagation — local edits stay until the user exits and are then discarded. */
     private void setDesign(Design newDesign) {
         this.design = newDesign;
-        if (inCluster()) return;
-        FactoryStore.get().updateCurrent(newDesign);
+        if (!inCluster()) {
+            FactoryStore.get().updateCurrent(newDesign);
+            Factory now = FactoryStore.get().current();
+            if (now != null) FactoryFileStore.saveFactory(now);
+            return;
+        }
+        if (inLockedCluster()) {
+            // Locked — edits don't persist. this.design is updated transiently for the in-view
+            // render but never reaches the FactoryStore.
+            return;
+        }
+        // USER cluster: rebuild each frame with the updated parent design and flush to the store.
+        Design currentInner = newDesign;
+        java.util.ArrayDeque<ClusterFrame> rebuilt = new java.util.ArrayDeque<>();
+        for (ClusterFrame frame : clusterStack) { // innermost-first
+            Node n = frame.parentDesign().findNode(frame.clusterId());
+            if (n instanceof ClusterNode cn) {
+                ClusterNode updatedCluster = cn.withInnerDesign(currentInner);
+                Design newParent = frame.parentDesign().withNodeReplaced(frame.clusterId(), updatedCluster);
+                rebuilt.addLast(new ClusterFrame(newParent, frame.clusterId(), frame.clusterLabel(), frame.kind()));
+                currentInner = newParent;
+            } else {
+                rebuilt.addLast(frame); // defensive — shouldn't happen
+            }
+        }
+        clusterStack.clear();
+        java.util.Iterator<ClusterFrame> it = rebuilt.descendingIterator();
+        while (it.hasNext()) clusterStack.push(it.next());
+        FactoryStore.get().updateCurrent(currentInner);
         Factory now = FactoryStore.get().current();
         if (now != null) FactoryFileStore.saveFactory(now);
     }
 
     private void enterCluster(ClusterNode cluster) {
-        clusterStack.push(new ClusterFrame(this.design, cluster.id(), cluster.label()));
+        clusterStack.push(new ClusterFrame(this.design, cluster.id(), cluster.label(), cluster.kind()));
         this.design = cluster.innerDesign();
         canvas.clearSelection();
         canvas.setSelectedEdge(null);
@@ -296,7 +328,7 @@ public class EditorScreen extends Screen {
             properties.setSelected(null);
         }
 
-        CanvasRenderer.render(graphics, canvas, design, canvasX, canvasY, canvasW, canvasH);
+        CanvasRenderer.render(graphics, canvas, design, canvasX, canvasY, canvasW, canvasH, inLockedCluster());
         if (leftPanel != null && leftPanel.isOpen()) {
             leftPanel.render(graphics, mouseX, mouseY);
         }
@@ -367,6 +399,11 @@ public class EditorScreen extends Screen {
             String hint = "← Esc";
             graphics.drawString(this.font, hint,
                     canvasX + canvasW - this.font.width(hint) - 8, 8, 0xFFA8A8B8, false);
+            // Top-left lock badge inside a LOCKED cluster.
+            if (inLockedCluster()) {
+                String lock = "🔒 Locked";
+                graphics.drawString(this.font, lock, canvasX + 4, 8, 0xFFE8A040, true);
+            }
         }
     }
 
@@ -432,10 +469,12 @@ public class EditorScreen extends Screen {
         if (button == LEFT_MOUSE_BUTTON) {
             Vec2 world = canvas.screenToWorld(mouseX, mouseY);
             boolean ctrl = hasControlDown();
+            boolean locked = inLockedCluster();
 
             // Priority: ports → nodes → background. Edges + right-click handled separately.
+            // Locked clusters never start edge drags.
             Optional<HitTest.PortHit> portHit = HitTest.portAt(design, world.x(), world.y(), PORT_HIT_RADIUS);
-            if (portHit.isPresent() && portHit.get().output()) {
+            if (portHit.isPresent() && portHit.get().output() && !locked) {
                 canvas.startEdgeDrag(portHit.get(), world.x(), world.y());
                 return true;
             }
@@ -452,20 +491,22 @@ public class EditorScreen extends Screen {
                     canvas.toggleSelection(node.id());
                     return true;
                 }
-                // If the clicked node is already in a multi-selection, don't collapse: prepare
-                // for a group drag. Otherwise replace the selection with this node.
                 if (!canvas.isSelected(node.id())) {
                     canvas.setSelectedNodeId(node.id());
                 }
                 if (isDoubleClick) {
+                    // Double-clicking still navigates INTO nested clusters even when the outer
+                    // is locked — the user is just browsing, not editing.
                     if (node instanceof ClusterNode cluster) {
                         enterCluster(cluster);
                         return true;
                     }
-                    editingNodeId = node.id();
+                    // Editing the props panel only makes sense for editable contexts.
+                    if (!locked) editingNodeId = node.id();
                     return true;
                 }
-                canvas.startNodeDrag(node.id(), node.position(), world.x(), world.y());
+                // Locked: selection only, no drag-to-move.
+                if (!locked) canvas.startNodeDrag(node.id(), node.position(), world.x(), world.y());
                 return true;
             }
             // After nodes, try edges — click an edge to select it (and then delete via Del/Backspace).
@@ -484,16 +525,44 @@ public class EditorScreen extends Screen {
             Optional<Node> nodeHit = HitTest.nodeAt(design, world.x(), world.y());
             if (nodeHit.isPresent()) {
                 Node node = nodeHit.get();
-                // If the right-clicked node isn't part of an existing multi-selection, treat
-                // this as a single-node action: select just it.
                 if (!canvas.isSelected(node.id())) canvas.setSelectedNodeId(node.id());
                 boolean multi = canvas.selectedNodes().size() > 1;
+                boolean locked = inLockedCluster();
                 List<ContextMenu.Option> opts = new java.util.ArrayList<>();
+                // Inside a locked cluster: read-only menu. JEI lookups and "Enter cluster" still
+                // make sense; structural edits do not.
+                if (locked) {
+                    if (node instanceof ClusterNode) {
+                        opts.add(new ContextMenu.Option("Enter cluster", () -> {
+                            if (node instanceof ClusterNode cl) enterCluster(cl);
+                        }));
+                    }
+                    if (node instanceof RecipeNode rn && JeiBridge.getRuntime() != null) {
+                        RecipeEntry entry = RebuildTrigger.index().byId(rn.recipeId());
+                        if (entry != null) {
+                            opts.add(new ContextMenu.Option("View in JEI",
+                                    () -> JeiBridge.showRecipeInJei(entry.typeId(), entry.id())));
+                        }
+                    }
+                    if (!opts.isEmpty()) contextMenu.show((int) mouseX, (int) mouseY, opts);
+                    return true;
+                }
                 if (!multi) {
                     opts.add(new ContextMenu.Option("Edit", () -> {
                         canvas.setSelectedNodeId(node.id());
                         editingNodeId = node.id();
                     }));
+                    if (node instanceof ClusterNode cn) {
+                        String label = cn.kind() == ClusterNode.Kind.LOCKED ? "Unlock cluster" : "Lock cluster";
+                        opts.add(new ContextMenu.Option(label, () -> {
+                            ClusterNode.Kind newKind = cn.kind() == ClusterNode.Kind.LOCKED
+                                    ? ClusterNode.Kind.USER : ClusterNode.Kind.LOCKED;
+                            setDesign(design.withNodeReplaced(cn.id(), cn.withKind(newKind)));
+                        }));
+                    }
+                }
+                if (multi) {
+                    opts.add(new ContextMenu.Option("Group into Cluster", this::groupSelectedIntoCluster));
                 }
                 opts.add(new ContextMenu.Option(multi ? "Clone all" : "Clone", () -> {
                     Design updated = design;
@@ -717,6 +786,140 @@ public class EditorScreen extends Screen {
         canvas.setSelectedNodeId(node.id());
     }
 
+    private void addClusterNode() {
+        Design empty = new Design("Cluster", List.of(), List.of());
+        ClusterNode node = new ClusterNode(UUID.randomUUID(), canvasCenter(),
+                "New Cluster", empty, ClusterNode.Kind.USER, 1);
+        setDesign(design.withNodeAdded(node));
+        canvas.setSelectedNodeId(node.id());
+    }
+
+    /**
+     * Wrap every currently-selected node in a fresh USER cluster. Boundary edges are auto-promoted:
+     * each selected node's input that was fed by something OUTSIDE the selection (or unwired) gets
+     * a {@link SourceNode} inside the cluster + a redirected outer edge to the cluster's matching
+     * input port. Each selected output that fed something outside gets a {@link SinkNode} inside +
+     * a redirected outer edge from the cluster's matching output port.
+     *
+     * <p>This means dropping a "Group into Cluster" on the middle of a chain leaves the surrounding
+     * wiring intact — items still flow through as if nothing changed, just visually wrapped.
+     */
+    private void groupSelectedIntoCluster() {
+        java.util.Set<UUID> selected = canvas.selectedNodes();
+        if (selected.size() < 2) return;
+
+        java.util.LinkedHashMap<UUID, Node> originals = new java.util.LinkedHashMap<>();
+        double cx = 0, cy = 0;
+        for (Node n : design.nodes()) {
+            if (selected.contains(n.id())) {
+                originals.put(n.id(), n);
+                cx += n.position().x();
+                cy += n.position().y();
+            }
+        }
+        if (originals.isEmpty()) return;
+        cx /= originals.size();
+        cy /= originals.size();
+
+        List<Node> innerNodes = new java.util.ArrayList<>(originals.values());
+        List<Edge> innerEdges = new java.util.ArrayList<>();
+        for (Edge e : design.edges()) {
+            if (selected.contains(e.from()) && selected.contains(e.to())) {
+                innerEdges.add(e);
+            }
+        }
+
+        // Pending boundary rewires — applied AFTER we build the cluster (we need cluster.id +
+        // port index lookup). Records snapshotted on existing data; safe across the loop.
+        record PendingInput(UUID externalSourceId, int externalSourcePort, UUID innerSourceId) {}
+        record PendingOutput(UUID innerSinkId, UUID externalTargetId, int externalTargetPort) {}
+        List<PendingInput> pendingInputs = new java.util.ArrayList<>();
+        List<PendingOutput> pendingOutputs = new java.util.ArrayList<>();
+
+        // Build a source node for every selected node's unconnected (in this selection) input.
+        for (Node n : originals.values()) {
+            for (dev.kima.cogwheel.model.Port p : n.inputs()) {
+                final int pIdx = p.index();
+                boolean internalLink = innerEdges.stream().anyMatch(e ->
+                        e.to().equals(n.id()) && e.toPort() == pIdx);
+                if (internalLink) continue;
+                Edge externalIn = null;
+                for (Edge e : design.edges()) {
+                    if (e.to().equals(n.id()) && e.toPort() == pIdx && !selected.contains(e.from())) {
+                        externalIn = e;
+                        break;
+                    }
+                }
+                ItemStack item = p.display();
+                if (item.isEmpty()) continue; // wildcard ports (splitter/merger) skip
+                UUID srcId = UUID.randomUUID();
+                Vec2 srcPos = new Vec2(n.position().x() - 140, n.position().y() + pIdx * 28);
+                innerNodes.add(new SourceNode(srcId, srcPos, item, SourceNode.Kind.MANUAL));
+                innerEdges.add(new Edge(srcId, 0, n.id(), pIdx, 0.0));
+                if (externalIn != null) {
+                    pendingInputs.add(new PendingInput(externalIn.from(), externalIn.fromPort(), srcId));
+                }
+            }
+        }
+        // Build a sink for every selected node's output that fed something external.
+        for (Node n : originals.values()) {
+            for (dev.kima.cogwheel.model.Port p : n.outputs()) {
+                final int pIdx = p.index();
+                List<Edge> externalsOut = new java.util.ArrayList<>();
+                for (Edge e : design.edges()) {
+                    if (e.from().equals(n.id()) && e.fromPort() == pIdx && !selected.contains(e.to())) {
+                        externalsOut.add(e);
+                    }
+                }
+                if (externalsOut.isEmpty()) continue;
+                ItemStack item = p.display();
+                if (item.isEmpty()) continue;
+                UUID sinkId = UUID.randomUUID();
+                Vec2 sinkPos = new Vec2(n.position().x() + 220, n.position().y() + pIdx * 28);
+                innerNodes.add(new SinkNode(sinkId, sinkPos, item));
+                innerEdges.add(new Edge(n.id(), pIdx, sinkId, 0, 0.0));
+                for (Edge ext : externalsOut) {
+                    pendingOutputs.add(new PendingOutput(sinkId, ext.to(), ext.toPort()));
+                }
+            }
+        }
+
+        Design innerDesign = new Design("Cluster", List.copyOf(innerNodes), List.copyOf(innerEdges));
+        ClusterNode cluster = new ClusterNode(UUID.randomUUID(),
+                new Vec2(cx, cy), "New Cluster", innerDesign, ClusterNode.Kind.USER, 1);
+
+        // Map inner Source/Sink IDs to the cluster's outer port indices (iteration-order-derived).
+        java.util.Map<UUID, Integer> sourceToPort = new java.util.HashMap<>();
+        java.util.Map<UUID, Integer> sinkToPort = new java.util.HashMap<>();
+        int inIdx = 0, outIdx = 0;
+        for (Node n : innerDesign.nodes()) {
+            if (n instanceof SourceNode src) sourceToPort.put(src.id(), inIdx++);
+            else if (n instanceof SinkNode sk) sinkToPort.put(sk.id(), outIdx++);
+            else if (n instanceof OutputNode on) sinkToPort.put(on.id(), outIdx++);
+        }
+
+        Design updated = design;
+        for (UUID id : selected) updated = updated.withNodeRemoved(id);
+        updated = updated.withNodeAdded(cluster);
+        for (PendingInput pi : pendingInputs) {
+            Integer port = sourceToPort.get(pi.innerSourceId());
+            if (port != null) {
+                updated = updated.withEdgeAdded(new Edge(pi.externalSourceId(), pi.externalSourcePort(),
+                        cluster.id(), port, 0.0));
+            }
+        }
+        for (PendingOutput po : pendingOutputs) {
+            Integer port = sinkToPort.get(po.innerSinkId());
+            if (port != null) {
+                updated = updated.withEdgeAdded(new Edge(cluster.id(), port,
+                        po.externalTargetId(), po.externalTargetPort(), 0.0));
+            }
+        }
+        setDesign(updated);
+        canvas.clearSelection();
+        canvas.setSelectedNodeId(cluster.id());
+    }
+
     private void addLimiterNode() {
         LimiterNode node = new LimiterNode(UUID.randomUUID(), canvasCenter(), LimiterNode.DEFAULT_LIMIT);
         setDesign(design.withNodeAdded(node));
@@ -827,7 +1030,10 @@ public class EditorScreen extends Screen {
         // shouldn't trigger Ctrl+S or Delete).
         if (super.keyPressed(keyCode, scanCode, modifiers)) return true;
 
-        // Delete / Backspace removes the selected edge or node.
+        // Delete / Backspace removes the selected edge or node. Blocked inside locked clusters.
+        if ((keyCode == GLFW.GLFW_KEY_DELETE || keyCode == GLFW.GLFW_KEY_BACKSPACE) && inLockedCluster()) {
+            return true; // consume so it doesn't bubble
+        }
         if (keyCode == GLFW.GLFW_KEY_DELETE || keyCode == GLFW.GLFW_KEY_BACKSPACE) {
             Edge sEdge = canvas.selectedEdge();
             if (sEdge != null) {

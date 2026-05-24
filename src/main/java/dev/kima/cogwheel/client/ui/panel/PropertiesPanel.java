@@ -4,6 +4,7 @@ import dev.kima.cogwheel.client.ui.modal.TextInputModal;
 import dev.kima.cogwheel.client.ui.picker.ExternalOutputPickerScreen;
 import dev.kima.cogwheel.model.Factory;
 import dev.kima.cogwheel.model.FactoryStore;
+import dev.kima.cogwheel.model.ClusterNode;
 import dev.kima.cogwheel.model.FilterNode;
 import dev.kima.cogwheel.model.LimiterNode;
 import dev.kima.cogwheel.model.MergerNode;
@@ -157,6 +158,43 @@ public final class PropertiesPanel {
             renderLimiter(graphics, font, limiter, contentY);
         } else if (selected instanceof FilterNode filter) {
             renderFilter(graphics, font, filter, contentY);
+        } else if (selected instanceof ClusterNode cluster) {
+            renderCluster(graphics, font, cluster, contentY, mouseX, mouseY);
+        }
+    }
+
+    private void renderCluster(GuiGraphics graphics, Font font, ClusterNode cluster, int y,
+                                int mouseX, int mouseY) {
+        graphics.drawString(font, "Name", panelX + PADDING, y, TEXT_DIM, false);
+        int renameY = y + ROW_HEIGHT;
+        drawButton(graphics, panelX + PADDING, renameY, WIDTH - PADDING * 2, BUTTON_HEIGHT,
+                cluster.label().isEmpty() ? "Rename…" : cluster.label(), mouseX, mouseY);
+
+        int parY = renameY + BUTTON_HEIGHT + PADDING * 2;
+        graphics.drawString(font, "Parallelism: " + cluster.parallelism(),
+                panelX + PADDING, parY, TEXT, false);
+        int sliderY = parY + ROW_HEIGHT;
+        renderSlider(graphics, panelX + PADDING, sliderY, WIDTH - PADDING * 2,
+                cluster.parallelism(), PARALLELISM_MIN, PARALLELISM_MAX);
+
+        int lockY = sliderY + SLIDER_HEIGHT + PADDING * 2;
+        String lockLabel = cluster.kind() == ClusterNode.Kind.LOCKED ? "🔒 Locked — click to unlock" : "Unlocked — click to lock";
+        drawButton(graphics, panelX + PADDING, lockY, WIDTH - PADDING * 2, BUTTON_HEIGHT,
+                lockLabel, mouseX, mouseY);
+
+        int inY = lockY + BUTTON_HEIGHT + PADDING * 2;
+        graphics.drawString(font, "Inputs", panelX + PADDING, inY, TEXT_DIM, false);
+        int rowY = inY + ROW_HEIGHT;
+        for (Port p : cluster.inputs()) {
+            renderPortRow(graphics, font, p, rowY);
+            rowY += ROW_HEIGHT + 2;
+        }
+        rowY += PADDING;
+        graphics.drawString(font, "Outputs", panelX + PADDING, rowY, TEXT_DIM, false);
+        rowY += ROW_HEIGHT;
+        for (Port p : cluster.outputs()) {
+            renderPortRow(graphics, font, p, rowY);
+            rowY += ROW_HEIGHT + 2;
         }
     }
 
@@ -482,6 +520,36 @@ public final class PropertiesPanel {
                 applySliderDrag(sx);
                 return true;
             }
+        } else if (selected instanceof ClusterNode cluster) {
+            // Rename button
+            int renameY = contentY + ROW_HEIGHT;
+            if (hits(sx, sy, panelX + PADDING, renameY, WIDTH - PADDING * 2, BUTTON_HEIGHT)) {
+                Minecraft.getInstance().setScreen(new TextInputModal(
+                        Minecraft.getInstance().screen,
+                        Component.literal("Rename cluster"),
+                        cluster.label(),
+                        newName -> {
+                            String n = newName == null || newName.isEmpty() ? "Cluster" : newName;
+                            onNodeUpdated.accept(cluster.withLabel(n));
+                        }));
+                return true;
+            }
+            // Parallelism slider
+            int parY = renameY + BUTTON_HEIGHT + PADDING * 2;
+            int sliderY = parY + ROW_HEIGHT;
+            if (hits(sx, sy, panelX + PADDING, sliderY, WIDTH - PADDING * 2, SLIDER_HEIGHT)) {
+                draggingSlider = true;
+                applySliderDrag(sx);
+                return true;
+            }
+            // Lock toggle button
+            int lockY = sliderY + SLIDER_HEIGHT + PADDING * 2;
+            if (hits(sx, sy, panelX + PADDING, lockY, WIDTH - PADDING * 2, BUTTON_HEIGHT)) {
+                ClusterNode.Kind newKind = cluster.kind() == ClusterNode.Kind.LOCKED
+                        ? ClusterNode.Kind.USER : ClusterNode.Kind.LOCKED;
+                onNodeUpdated.accept(cluster.withKind(newKind));
+                return true;
+            }
         }
         return true;
     }
@@ -528,6 +596,11 @@ public final class PropertiesPanel {
             double v = LimiterNode.MIN_LIMIT * Math.pow(LimiterNode.MAX_LIMIT / LimiterNode.MIN_LIMIT, frac);
             if (Math.abs(v - limiter.limitPerMin()) > 0.01) {
                 onNodeUpdated.accept(limiter.withLimit(v));
+            }
+        } else if (selected instanceof ClusterNode cluster) {
+            int newValue = (int) Math.round(PARALLELISM_MIN + frac * (PARALLELISM_MAX - PARALLELISM_MIN));
+            if (newValue != cluster.parallelism()) {
+                onNodeUpdated.accept(cluster.withParallelism(newValue));
             }
         }
     }
