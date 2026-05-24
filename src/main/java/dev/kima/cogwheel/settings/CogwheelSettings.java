@@ -16,17 +16,50 @@ import java.util.Map;
 import java.util.function.Function;
 
 /**
- * Singleton config for editor colors + sizes. Persisted in {@code cogwheel/settings.json} —
- * loaded once on first access, saved on every {@link #set} call.
+ * Singleton config for editor colors + sizes + behavior. Persisted in {@code cogwheel/settings.json}
+ * — loaded once on first access, saved on every setter call.
  *
- * <p>Settings are keyed by a stable string {@link Key}; readers ask for a value with a default and
- * get the override if one's been set. This keeps the JSON file forward-compatible — new keys added
- * in a future Cogwheel version simply fall back to their defaults on older saves.
+ * <p>Settings are organized along TWO axes:
+ * <ul>
+ *   <li>{@link Category} — the top-level tab the setting lives under in the Settings page UI
+ *       (Colors / Texts / Cogwheel).</li>
+ *   <li>{@link Section} — finer in-tab grouping, drives the visual section dividers within a tab.</li>
+ * </ul>
+ *
+ * <p>Three setting flavors:
+ * <ul>
+ *   <li>{@link Key} — ARGB color overrides</li>
+ *   <li>{@link NumKey} — numeric (float) settings with min/max/step</li>
+ *   <li>{@link BoolKey} — on/off toggles</li>
+ * </ul>
+ *
+ * <p>All three round-trip through the same {@code settings.json} file via stable enum names; new
+ * keys added in a future Cogwheel version simply fall back to their defaults on older saves.
  */
 public final class CogwheelSettings {
 
-    /** Stable string identifiers for every override-able setting. The order here drives the order
-     *  shown in the {@code SettingsPage} UI; {@link Section} groups them for the section header. */
+    /** Top-level tab grouping shown in the Settings page. */
+    public enum Category { COLORS, TEXTS, COGWHEEL }
+
+    /** Finer grouping inside a tab — drives section dividers / headers. */
+    public enum Section {
+        CANVAS  (Category.COLORS, "Canvas"),
+        NODES   (Category.COLORS, "Nodes"),
+        EDGES   (Category.COLORS, "Edges"),
+        TEXT    (Category.TEXTS,  "Text colors"),
+        SIZES   (Category.TEXTS,  "Sizes"),
+        COGWHEEL(Category.COGWHEEL, "Cogwheel");
+
+        public final Category category;
+        public final String label;
+
+        Section(Category category, String label) {
+            this.category = category;
+            this.label = label;
+        }
+    }
+
+    /** ARGB color overrides — clickable swatch in the UI opens the picker. */
     public enum Key {
         CANVAS_BG       (Section.CANVAS, 0xFF1A1E2A, "Canvas background"),
         CANVAS_BG_LOCKED(Section.CANVAS, 0xFF222632, "Locked cluster background"),
@@ -61,8 +94,6 @@ public final class CogwheelSettings {
         }
     }
 
-    public enum Section { CANVAS, NODES, EDGES, TEXT, SIZES }
-
     /** Numeric (float) settings — sliders / steppers in the UI. */
     public enum NumKey {
         CONTENT_SCALE(Section.SIZES, 0.8f, 0.5f, 1.5f, 0.05f, "Node text & icon scale"),
@@ -85,11 +116,33 @@ public final class CogwheelSettings {
         }
     }
 
+    /** Boolean toggles — checkbox rows in the UI. */
+    public enum BoolKey {
+        /** When ON, the recipe picker excludes vanilla minecraft recipes so the user only sees
+         *  modded options (typically Create + addons). Useful when planning Create-heavy factories
+         *  where the vanilla "X → 9X compaction" recipes would otherwise drown the picker. */
+        HIDE_VANILLA_RECIPES(Section.COGWHEEL, true, "Hide default Minecraft recipes"),
+        /** Reserved for a future feature: dynamically build example Ponder scenes for the user's
+         *  factory using the Ponder mod. Today this is just persisted; future versions will read it. */
+        ALLOW_PONDER_CREATION(Section.COGWHEEL, true, "Allow Ponder creation");
+
+        public final Section section;
+        public final boolean defaultValue;
+        public final String label;
+
+        BoolKey(Section section, boolean defaultValue, String label) {
+            this.section = section;
+            this.defaultValue = defaultValue;
+            this.label = label;
+        }
+    }
+
     private static final CogwheelSettings INSTANCE = new CogwheelSettings();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     private final Map<Key, Integer> overrides = new LinkedHashMap<>();
     private final Map<NumKey, Float> numOverrides = new LinkedHashMap<>();
+    private final Map<BoolKey, Boolean> boolOverrides = new LinkedHashMap<>();
     private boolean loaded = false;
 
     private CogwheelSettings() {}
@@ -121,6 +174,7 @@ public final class CogwheelSettings {
     public void resetAll() {
         overrides.clear();
         numOverrides.clear();
+        boolOverrides.clear();
         save();
     }
 
@@ -152,6 +206,29 @@ public final class CogwheelSettings {
         return numOverrides.containsKey(key);
     }
 
+    public boolean bool(BoolKey key) {
+        if (!loaded) load();
+        Boolean v = boolOverrides.get(key);
+        return v != null ? v : key.defaultValue;
+    }
+
+    public void setBool(BoolKey key, boolean value) {
+        if (!loaded) load();
+        if (value == key.defaultValue) boolOverrides.remove(key);
+        else boolOverrides.put(key, value);
+        save();
+    }
+
+    public void resetBool(BoolKey key) {
+        if (!loaded) load();
+        boolOverrides.remove(key);
+        save();
+    }
+
+    public boolean isOverridden(BoolKey key) {
+        return boolOverrides.containsKey(key);
+    }
+
     private Path filePath() {
         Path gameDir = Minecraft.getInstance() != null
                 ? Minecraft.getInstance().gameDirectory.toPath()
@@ -178,6 +255,11 @@ public final class CogwheelSettings {
                     try { numOverrides.put(k, root.get(k.name()).getAsFloat()); } catch (Exception ignored) {}
                 }
             }
+            for (BoolKey k : BoolKey.values()) {
+                if (root.has(k.name())) {
+                    try { boolOverrides.put(k, root.get(k.name()).getAsBoolean()); } catch (Exception ignored) {}
+                }
+            }
         } catch (Exception e) {
             CogwheelConstants.LOG.error("Cogwheel: failed to load settings.json: {}", e.getMessage());
         }
@@ -192,6 +274,9 @@ public final class CogwheelSettings {
                 root.addProperty(e.getKey().name(), formatHex(e.getValue()));
             }
             for (Map.Entry<NumKey, Float> e : numOverrides.entrySet()) {
+                root.addProperty(e.getKey().name(), e.getValue());
+            }
+            for (Map.Entry<BoolKey, Boolean> e : boolOverrides.entrySet()) {
                 root.addProperty(e.getKey().name(), e.getValue());
             }
             Files.writeString(file, GSON.toJson(root));

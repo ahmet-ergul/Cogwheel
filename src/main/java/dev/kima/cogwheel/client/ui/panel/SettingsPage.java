@@ -8,18 +8,20 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
 
 /**
- * Editor settings page — scroll list of color and numeric overrides grouped by section. Each color
- * row has a clickable swatch (opens {@link ColorPickerModal}) + label + per-row reset (↻). Each
- * numeric row has decrement / value / increment controls + reset. A "Reset all to defaults" footer
- * wipes every override.
+ * Editor settings page — three top-level tabs (Colors / Texts / Cogwheel), each with a scrollable
+ * list of rows. Color rows have a clickable swatch (opens {@link ColorPickerModal}) + label +
+ * per-row reset. Numeric rows have stepper controls. Bool rows have a checkbox. A "Reset all to
+ * defaults" footer wipes every override across every tab.
  */
 public final class SettingsPage implements LeftPanelPage {
 
     private static final int PADDING = 5;
+    private static final int TAB_HEIGHT = 16;
     private static final int SECTION_GAP = 6;
     private static final int SECTION_HEADER_HEIGHT = 12;
     private static final int ROW_HEIGHT = 20;
     private static final int SWATCH_SIZE = 14;
+    private static final int CHECKBOX_SIZE = 12;
     private static final int RESET_SIZE = 12;
     private static final int FOOTER_HEIGHT = 16;
     private static final int STEPPER_SIZE = 12;
@@ -28,8 +30,13 @@ public final class SettingsPage implements LeftPanelPage {
     private static final int BORDER = 0xFF2A3148;
     private static final int SCROLLBAR = 0xFF54607A;
     private static final int HOVER_BG = 0xFF3A4868;
+    private static final int TAB_BG_ACTIVE = 0xFF3A4868;
+    private static final int TAB_BG_INACTIVE = 0xFF1A1E2A;
 
-    private double scrollOffset;
+    private CogwheelSettings.Category activeTab = CogwheelSettings.Category.COLORS;
+    /** Per-tab scroll offsets so switching back doesn't lose your place. */
+    private final java.util.EnumMap<CogwheelSettings.Category, Double> scrollByTab =
+            new java.util.EnumMap<>(CogwheelSettings.Category.class);
     private int x, y, width, height;
 
     @Override
@@ -45,24 +52,37 @@ public final class SettingsPage implements LeftPanelPage {
         this.x = x; this.y = y; this.width = width; this.height = height;
     }
 
-    private int listY() { return y + PADDING; }
-    private int listH() { return height - PADDING - FOOTER_HEIGHT; }
+    private int tabsBottomY() { return y + TAB_HEIGHT; }
+    private int listY() { return tabsBottomY() + PADDING; }
+    private int listH() { return height - (listY() - y) - FOOTER_HEIGHT; }
 
-    /** Cumulative y-offset (within the scroll content) of every row, used by render + click. */
+    private double scroll() { return scrollByTab.getOrDefault(activeTab, 0.0); }
+    private void setScroll(double v) { scrollByTab.put(activeTab, v); }
+
+    /** Row kinds the layout iterator emits — drives both render and click dispatch. */
     private record RowLayout(int yWithinList, RowKind kind, Object key) {}
-    private enum RowKind { COLOR, NUM, HEADER }
+    private enum RowKind { COLOR, NUM, BOOL, HEADER }
 
+    /** Build the list of rows for the currently active tab. */
     private java.util.List<RowLayout> layout() {
         java.util.List<RowLayout> out = new java.util.ArrayList<>();
         int cursor = 0;
         CogwheelSettings.Section curSection = null;
-        // Iterate keys + numkeys grouped by section in enum declaration order, but emit a header
-        // per section. Build a per-section list of entries first.
-        java.util.LinkedHashMap<CogwheelSettings.Section, java.util.List<Object>> grouped = new java.util.LinkedHashMap<>();
+
+        // Group by Section within this tab (preserving section enum order). Per-section list of
+        // entries holds Key + NumKey + BoolKey in declaration order.
+        java.util.LinkedHashMap<CogwheelSettings.Section, java.util.List<Object>> grouped =
+                new java.util.LinkedHashMap<>();
         for (CogwheelSettings.Key k : CogwheelSettings.Key.values()) {
+            if (k.section.category != activeTab) continue;
             grouped.computeIfAbsent(k.section, s -> new java.util.ArrayList<>()).add(k);
         }
         for (CogwheelSettings.NumKey k : CogwheelSettings.NumKey.values()) {
+            if (k.section.category != activeTab) continue;
+            grouped.computeIfAbsent(k.section, s -> new java.util.ArrayList<>()).add(k);
+        }
+        for (CogwheelSettings.BoolKey k : CogwheelSettings.BoolKey.values()) {
+            if (k.section.category != activeTab) continue;
             grouped.computeIfAbsent(k.section, s -> new java.util.ArrayList<>()).add(k);
         }
         for (var entry : grouped.entrySet()) {
@@ -71,7 +91,10 @@ public final class SettingsPage implements LeftPanelPage {
             out.add(new RowLayout(cursor, RowKind.HEADER, curSection));
             cursor += SECTION_HEADER_HEIGHT;
             for (Object o : entry.getValue()) {
-                RowKind kind = (o instanceof CogwheelSettings.Key) ? RowKind.COLOR : RowKind.NUM;
+                RowKind kind;
+                if (o instanceof CogwheelSettings.Key)         kind = RowKind.COLOR;
+                else if (o instanceof CogwheelSettings.NumKey) kind = RowKind.NUM;
+                else                                            kind = RowKind.BOOL;
                 out.add(new RowLayout(cursor, kind, o));
                 cursor += ROW_HEIGHT;
             }
@@ -90,27 +113,29 @@ public final class SettingsPage implements LeftPanelPage {
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY) {
         Font font = Minecraft.getInstance().font;
+
+        renderTabs(graphics, font, mouseX, mouseY);
+
         int listY = listY();
         int listH = listH();
         int contentH = contentHeight();
 
         graphics.enableScissor(x, listY, x + width, listY + listH);
-
         for (RowLayout row : layout()) {
-            int rowY = listY + row.yWithinList - (int) scrollOffset;
+            int rowY = listY + row.yWithinList - (int) scroll();
             if (rowY + ROW_HEIGHT < listY || rowY > listY + listH) continue;
             switch (row.kind) {
                 case HEADER -> renderHeader(graphics, font, (CogwheelSettings.Section) row.key, rowY);
                 case COLOR  -> renderColorRow(graphics, font, (CogwheelSettings.Key) row.key, rowY, mouseX, mouseY);
                 case NUM    -> renderNumRow(graphics, font, (CogwheelSettings.NumKey) row.key, rowY, mouseX, mouseY);
+                case BOOL   -> renderBoolRow(graphics, font, (CogwheelSettings.BoolKey) row.key, rowY, mouseX, mouseY);
             }
         }
-
         graphics.disableScissor();
 
         if (contentH > listH) {
             int barH = Math.max(20, (int) ((double) listH / contentH * listH));
-            double frac = scrollOffset / (double) (contentH - listH);
+            double frac = scroll() / (double) (contentH - listH);
             int barY = listY + (int) (frac * (listH - barH));
             graphics.fill(x + width - 4, barY, x + width - 1, barY + barH, SCROLLBAR);
         }
@@ -127,8 +152,34 @@ public final class SettingsPage implements LeftPanelPage {
         graphics.drawString(font, label, x + (width - tw) / 2, footerY + 4, TEXT_DIM, false);
     }
 
+    private void renderTabs(GuiGraphics g, Font font, int mouseX, int mouseY) {
+        CogwheelSettings.Category[] tabs = CogwheelSettings.Category.values();
+        int tabW = width / tabs.length;
+        for (int i = 0; i < tabs.length; i++) {
+            int tx = x + i * tabW;
+            int tw = (i == tabs.length - 1) ? (width - i * tabW) : tabW;
+            boolean active = tabs[i] == activeTab;
+            boolean hover = mouseX >= tx && mouseX < tx + tw && mouseY >= y && mouseY < y + TAB_HEIGHT;
+            int bg = active ? TAB_BG_ACTIVE : (hover ? HOVER_BG : TAB_BG_INACTIVE);
+            g.fill(tx, y, tx + tw, y + TAB_HEIGHT, bg);
+            String label = tabLabel(tabs[i]);
+            int textW = font.width(label);
+            g.drawString(font, label, tx + (tw - textW) / 2, y + 4,
+                    active ? 0xFFEAEAEA : TEXT_DIM, false);
+        }
+        g.fill(x, y + TAB_HEIGHT, x + width, y + TAB_HEIGHT + 1, BORDER);
+    }
+
+    private static String tabLabel(CogwheelSettings.Category c) {
+        return switch (c) {
+            case COLORS   -> "Colors";
+            case TEXTS    -> "Texts";
+            case COGWHEEL -> "Cogwheel";
+        };
+    }
+
     private void renderHeader(GuiGraphics g, Font font, CogwheelSettings.Section section, int rowY) {
-        g.drawString(font, sectionLabel(section), x + PADDING, rowY + 2, TEXT_DIM, false);
+        g.drawString(font, section.label, x + PADDING, rowY + 2, TEXT_DIM, false);
         g.fill(x + PADDING, rowY + SECTION_HEADER_HEIGHT - 2,
                 x + width - PADDING, rowY + SECTION_HEADER_HEIGHT - 1, BORDER);
     }
@@ -149,7 +200,6 @@ public final class SettingsPage implements LeftPanelPage {
             }
         }
         g.fill(swX, swY, swX + SWATCH_SIZE, swY + SWATCH_SIZE, currentColor);
-        // Outline brighter on hover so the user knows it's clickable.
         boolean hoverSwatch = mouseX >= swX && mouseX < swX + SWATCH_SIZE
                 && mouseY >= swY && mouseY < swY + SWATCH_SIZE;
         int outlineColor = hoverSwatch ? 0xFFFFCC55 : BORDER;
@@ -169,7 +219,6 @@ public final class SettingsPage implements LeftPanelPage {
     private void renderNumRow(GuiGraphics g, Font font, CogwheelSettings.NumKey key, int rowY,
                               int mouseX, int mouseY) {
         int labelX = x + PADDING;
-        // Value display + stepper buttons on the right (before reset).
         float value = CogwheelSettings.get().num(key);
         String valStr = String.format("%.2f", value);
         int valW = font.width(valStr);
@@ -190,6 +239,39 @@ public final class SettingsPage implements LeftPanelPage {
                 CogwheelSettings.c(CogwheelSettings.Key.TEXT), false);
         renderStepper(g, font, plusX, rowY, "+", mouseX, mouseY);
         renderResetButton(g, font, resetX, rowY, mouseX, mouseY);
+    }
+
+    private void renderBoolRow(GuiGraphics g, Font font, CogwheelSettings.BoolKey key, int rowY,
+                                int mouseX, int mouseY) {
+        boolean value = CogwheelSettings.get().bool(key);
+        int cbX = x + PADDING;
+        int cbY = rowY + (ROW_HEIGHT - CHECKBOX_SIZE) / 2;
+        boolean hoverCb = mouseX >= cbX && mouseX < cbX + CHECKBOX_SIZE
+                && mouseY >= cbY && mouseY < cbY + CHECKBOX_SIZE;
+        // Box fill — gold when checked, neutral when unchecked.
+        int boxColor = value ? 0xFFE8B86E : 0xFF2A3148;
+        g.fill(cbX, cbY, cbX + CHECKBOX_SIZE, cbY + CHECKBOX_SIZE, boxColor);
+        outline(g, cbX, cbY, CHECKBOX_SIZE, CHECKBOX_SIZE,
+                hoverCb ? 0xFFFFCC55 : BORDER);
+        if (value) {
+            // Tick mark.
+            int cc = 0xFF000000;
+            g.fill(cbX + 3, cbY + 5, cbX + 4, cbY + 6, cc);
+            g.fill(cbX + 4, cbY + 6, cbX + 5, cbY + 7, cc);
+            g.fill(cbX + 5, cbY + 5, cbX + 6, cbY + 6, cc);
+            g.fill(cbX + 6, cbY + 4, cbX + 7, cbY + 5, cc);
+            g.fill(cbX + 7, cbY + 3, cbX + 8, cbY + 4, cc);
+        }
+
+        int labelX = cbX + CHECKBOX_SIZE + 5;
+        int labelMaxW = (x + width - PADDING - RESET_SIZE - 3) - labelX - 2;
+        int textColor = CogwheelSettings.get().isOverridden(key)
+                ? CogwheelSettings.c(CogwheelSettings.Key.TEXT)
+                : TEXT_DIM;
+        g.drawString(font, truncate(font, key.label, labelMaxW),
+                labelX, rowY + (ROW_HEIGHT - 8) / 2, textColor, false);
+
+        renderResetButton(g, font, x + width - PADDING - RESET_SIZE, rowY, mouseX, mouseY);
     }
 
     private void renderStepper(GuiGraphics g, Font font, int sx, int rowY, String sym,
@@ -216,6 +298,18 @@ public final class SettingsPage implements LeftPanelPage {
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (button != 0) return false;
+
+        // Tab strip.
+        if (mouseY >= y && mouseY < y + TAB_HEIGHT) {
+            CogwheelSettings.Category[] tabs = CogwheelSettings.Category.values();
+            int tabW = width / tabs.length;
+            int idx = (int) ((mouseX - x) / tabW);
+            if (idx >= 0 && idx < tabs.length) {
+                activeTab = tabs[idx];
+                return true;
+            }
+        }
+
         // Footer "Reset all"
         int footerY = y + height - FOOTER_HEIGHT;
         if (mouseY >= footerY + 2 && mouseY < footerY + FOOTER_HEIGHT - 2
@@ -223,9 +317,10 @@ public final class SettingsPage implements LeftPanelPage {
             CogwheelSettings.get().resetAll();
             return true;
         }
+
         int listY = listY();
         for (RowLayout row : layout()) {
-            int rowY = listY + row.yWithinList - (int) scrollOffset;
+            int rowY = listY + row.yWithinList - (int) scroll();
             switch (row.kind) {
                 case HEADER -> {}
                 case COLOR -> {
@@ -234,13 +329,15 @@ public final class SettingsPage implements LeftPanelPage {
                 case NUM -> {
                     if (handleNumRowClick((CogwheelSettings.NumKey) row.key, rowY, mouseX, mouseY)) return true;
                 }
+                case BOOL -> {
+                    if (handleBoolRowClick((CogwheelSettings.BoolKey) row.key, rowY, mouseX, mouseY)) return true;
+                }
             }
         }
         return false;
     }
 
     private boolean handleColorRowClick(CogwheelSettings.Key key, int rowY, double mx, double my) {
-        // Swatch
         int swX = x + PADDING;
         int swY = rowY + (ROW_HEIGHT - SWATCH_SIZE) / 2;
         if (mx >= swX && mx < swX + SWATCH_SIZE && my >= swY && my < swY + SWATCH_SIZE) {
@@ -250,7 +347,6 @@ public final class SettingsPage implements LeftPanelPage {
                     picked -> CogwheelSettings.get().set(key, picked)));
             return true;
         }
-        // Reset
         int rX = x + width - PADDING - RESET_SIZE;
         int rY = rowY + (ROW_HEIGHT - RESET_SIZE) / 2;
         if (mx >= rX && mx < rX + RESET_SIZE && my >= rY && my < rY + RESET_SIZE) {
@@ -287,13 +383,34 @@ public final class SettingsPage implements LeftPanelPage {
         return false;
     }
 
+    private boolean handleBoolRowClick(CogwheelSettings.BoolKey key, int rowY, double mx, double my) {
+        // Whole-row hit toggles — easier target than a 12-px checkbox alone.
+        int cbX = x + PADDING;
+        int cbY = rowY + (ROW_HEIGHT - CHECKBOX_SIZE) / 2;
+        int resetX = x + width - PADDING - RESET_SIZE;
+        int rY = rowY + (ROW_HEIGHT - RESET_SIZE) / 2;
+        if (mx >= resetX && mx < resetX + RESET_SIZE && my >= rY && my < rY + RESET_SIZE) {
+            CogwheelSettings.get().resetBool(key);
+            return true;
+        }
+        // Anywhere else on the row toggles the bool.
+        if (my >= rowY && my < rowY + ROW_HEIGHT && mx >= x && mx <= x + width - PADDING - RESET_SIZE) {
+            boolean current = CogwheelSettings.get().bool(key);
+            CogwheelSettings.get().setBool(key, !current);
+            return true;
+        }
+        return false;
+    }
+
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollY) {
         int contentH = contentHeight();
         int listH = listH();
         if (contentH <= listH) return true;
-        scrollOffset -= scrollY * ROW_HEIGHT;
-        scrollOffset = Math.max(0, Math.min(contentH - listH, scrollOffset));
+        double s = scroll();
+        s -= scrollY * ROW_HEIGHT;
+        s = Math.max(0, Math.min(contentH - listH, s));
+        setScroll(s);
         return true;
     }
 
@@ -302,16 +419,6 @@ public final class SettingsPage implements LeftPanelPage {
         g.fill(x, y + h - 1, x + w, y + h, color);
         g.fill(x, y, x + 1, y + h, color);
         g.fill(x + w - 1, y, x + w, y + h, color);
-    }
-
-    private static String sectionLabel(CogwheelSettings.Section s) {
-        return switch (s) {
-            case CANVAS -> "Canvas";
-            case NODES  -> "Nodes";
-            case EDGES  -> "Edges";
-            case TEXT   -> "Text";
-            case SIZES  -> "Sizes";
-        };
     }
 
     private static String truncate(Font font, String text, int maxWidth) {

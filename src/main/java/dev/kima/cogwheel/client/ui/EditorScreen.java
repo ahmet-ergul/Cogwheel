@@ -766,6 +766,19 @@ public class EditorScreen extends Screen {
         return canvas.screenToWorld(canvasX + canvasW / 2.0, canvasY + canvasH / 2.0);
     }
 
+    /** Apply the user's "Hide default Minecraft recipes" setting. When ON, recipes in the
+     *  {@code minecraft} namespace are dropped before reaching the picker — so a modded factory
+     *  doesn't get its picker drowned in vanilla compaction recipes. Off → identity. */
+    private static List<RecipeEntry> filterHiddenRecipes(List<RecipeEntry> ways) {
+        if (!dev.kima.cogwheel.settings.CogwheelSettings.get().bool(
+                dev.kima.cogwheel.settings.CogwheelSettings.BoolKey.HIDE_VANILLA_RECIPES)) {
+            return ways;
+        }
+        return ways.stream()
+                .filter(e -> e.id() == null || !"minecraft".equals(e.id().getNamespace()))
+                .toList();
+    }
+
     /** Walks the cluster stack outermost → innermost, threading the effective RPM through each
      *  cluster's optional override. At the root: factory RPM. Inside a cluster: the cluster's
      *  rpmOverride if set, else inherited from the level above. Used as the {@code factoryRpm}
@@ -791,7 +804,7 @@ public class EditorScreen extends Screen {
      *  fixed canvas center. */
     private void addRecipeNode(Item item, double screenX, double screenY) {
         var index = RebuildTrigger.index();
-        List<RecipeEntry> ways = index.waysToProduce(item);
+        List<RecipeEntry> ways = filterHiddenRecipes(index.waysToProduce(item));
         Vec2 placement = canvas.screenToWorld(screenX, screenY);
 
         if (ways.isEmpty()) {
@@ -1109,7 +1122,8 @@ public class EditorScreen extends Screen {
         ItemStack primaryOutput = rn.outputs().get(0).display();
         if (primaryOutput.isEmpty()) return;
 
-        List<RecipeEntry> ways = RebuildTrigger.index().waysToProduce(primaryOutput.getItem());
+        List<RecipeEntry> ways = filterHiddenRecipes(
+                RebuildTrigger.index().waysToProduce(primaryOutput.getItem()));
         if (ways.isEmpty()) return;
         if (ways.size() == 1) {
             // Only one path — replace anyway in case the recipe id changed under us.
