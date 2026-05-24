@@ -1,5 +1,6 @@
 package dev.kima.cogwheel.client.ui.canvas;
 
+import dev.kima.cogwheel.model.ClusterNode;
 import dev.kima.cogwheel.model.Node;
 import dev.kima.cogwheel.model.Port;
 import dev.kima.cogwheel.model.PortType;
@@ -38,6 +39,9 @@ public final class NodeRenderer {
     public static final int HEADER_SEP  = 0xFF1A1E2A;
     public static final int HEAT_HEATED      = 0xFFE8A040; // orange — Create "heated" condition
     public static final int HEAT_SUPERHEATED = 0xFFE85040; // red — Create "superheated" condition
+    public static final int CLUSTER_BORDER   = 0xFFB89AE8; // violet — visual distinction for ClusterNode
+    public static final int CLUSTER_HEADER_TOP    = 0xFF483F66;
+    public static final int CLUSTER_HEADER_BOTTOM = 0xFF3A3252;
     public static final int SHADOW      = 0x40000000; // 25% black drop shadow
     public static final int PORT_ITEM   = 0xFFE8B86E;
     public static final int PORT_ITEM_RING = 0xFF9A7842;
@@ -84,16 +88,21 @@ public final class NodeRenderer {
         graphics.fill(x + 1, y, x + w - 1, y + h, BG_DEEP);   // tall band
         graphics.fill(x, y + 1, x + w, y + h - 1, BG_COLOR);  // wide band (covers more area)
 
-        // 1-px border around the chamfer.
-        int borderColor = selected ? BORDER_SELECTED : BORDER;
+        // Cluster nodes get a violet border + header to set them apart from regular nodes.
+        boolean isCluster = node instanceof ClusterNode;
+        int defaultBorder = isCluster ? CLUSTER_BORDER : BORDER;
+        int borderColor = selected ? BORDER_SELECTED : defaultBorder;
+        int headerTop = isCluster ? CLUSTER_HEADER_TOP : HEADER_BG_TOP;
+        int headerBottom = isCluster ? CLUSTER_HEADER_BOTTOM : HEADER_BG_BOTTOM;
+
         graphics.fill(x + 1, y, x + w - 1, y + 1, borderColor);                 // top
         graphics.fill(x + 1, y + h - 1, x + w - 1, y + h, borderColor);         // bottom
         graphics.fill(x, y + 1, x + 1, y + h - 1, borderColor);                 // left
         graphics.fill(x + w - 1, y + 1, x + w, y + h - 1, borderColor);         // right
 
         // Header — two-tone gradient (lighter top → darker bottom) + bottom separator line.
-        graphics.fill(x + 1, y + 1, x + w - 1, y + HEADER_HEIGHT / 2 + 1, HEADER_BG_TOP);
-        graphics.fill(x + 1, y + HEADER_HEIGHT / 2 + 1, x + w - 1, y + HEADER_HEIGHT, HEADER_BG_BOTTOM);
+        graphics.fill(x + 1, y + 1, x + w - 1, y + HEADER_HEIGHT / 2 + 1, headerTop);
+        graphics.fill(x + 1, y + HEADER_HEIGHT / 2 + 1, x + w - 1, y + HEADER_HEIGHT, headerBottom);
         graphics.fill(x + 1, y + HEADER_HEIGHT, x + w - 1, y + HEADER_HEIGHT + 1, HEADER_SEP);
 
         if (!node.icon().isEmpty()) {

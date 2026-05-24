@@ -4,6 +4,7 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import dev.kima.cogwheel.model.Design;
+import dev.kima.cogwheel.model.ClusterNode;
 import dev.kima.cogwheel.model.Edge;
 import dev.kima.cogwheel.model.ExternalRef;
 import dev.kima.cogwheel.model.Factory;
@@ -139,6 +140,21 @@ public final class DesignCodecs {
             ITEM_STACK.fieldOf("match_item").forGetter(FilterNode::matchItem)
     ).apply(i, FilterNode::new));
 
+    public static final Codec<ClusterNode.Kind> CLUSTER_KIND = Codec.STRING.xmap(
+            ClusterNode.Kind::valueOf, ClusterNode.Kind::name);
+
+    // CLUSTER_NODE is recursive — it contains a Design, which contains a list of Nodes, one of
+    // which can be another ClusterNode. Lazy init breaks the cycle: DESIGN is defined further down
+    // and gets bound by the JVM before encode/decode actually runs.
+    public static final MapCodec<ClusterNode> CLUSTER_NODE = RecordCodecBuilder.mapCodec(i -> i.group(
+            UUIDUtil.CODEC.fieldOf("id").forGetter(ClusterNode::id),
+            VEC2.fieldOf("position").forGetter(ClusterNode::position),
+            Codec.STRING.fieldOf("label").forGetter(ClusterNode::label),
+            Codec.lazyInitialized(DesignCodecs::designCodec).fieldOf("inner_design").forGetter(ClusterNode::innerDesign),
+            CLUSTER_KIND.fieldOf("kind").forGetter(ClusterNode::kind),
+            Codec.INT.optionalFieldOf("parallelism", 1).forGetter(ClusterNode::parallelism)
+    ).apply(i, ClusterNode::new));
+
     public static final Codec<Node> NODE = Codec.STRING.dispatch(
             "type",
             DesignCodecs::nodeTypeName,
@@ -159,6 +175,12 @@ public final class DesignCodecs {
             EDGE.listOf().fieldOf("edges").forGetter(Design::edges)
     ).apply(i, (version, name, nodes, edges) -> new Design(name, nodes, edges)));
 
+    /** Indirection so {@link #CLUSTER_NODE} can reference {@link #DESIGN} via a method ref —
+     *  static field forward references are illegal in Java init order, but method refs aren't. */
+    private static Codec<dev.kima.cogwheel.model.Design> designCodec() {
+        return DESIGN;
+    }
+
     private static String nodeTypeName(Node node) {
         if (node instanceof SourceNode) return "source";
         if (node instanceof RecipeNode) return "recipe";
@@ -168,6 +190,7 @@ public final class DesignCodecs {
         if (node instanceof OutputNode) return "output";
         if (node instanceof LimiterNode) return "limiter";
         if (node instanceof FilterNode) return "filter";
+        if (node instanceof ClusterNode) return "cluster";
         throw new IllegalStateException("Unknown node type: " + node.getClass().getName());
     }
 
@@ -181,6 +204,7 @@ public final class DesignCodecs {
             case "output"   -> OUTPUT_NODE;
             case "limiter"  -> LIMITER_NODE;
             case "filter"   -> FILTER_NODE;
+            case "cluster"  -> CLUSTER_NODE;
             default         -> throw new IllegalArgumentException("Unknown node type: " + name);
         };
     }

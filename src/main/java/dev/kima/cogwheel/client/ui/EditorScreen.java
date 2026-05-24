@@ -17,6 +17,7 @@ import dev.kima.cogwheel.model.Design;
 import dev.kima.cogwheel.model.Edge;
 import dev.kima.cogwheel.model.Factory;
 import dev.kima.cogwheel.model.FactoryStore;
+import dev.kima.cogwheel.model.ClusterNode;
 import dev.kima.cogwheel.model.FilterNode;
 import dev.kima.cogwheel.model.LimiterNode;
 import dev.kima.cogwheel.model.MergerNode;
@@ -81,6 +82,13 @@ public class EditorScreen extends Screen {
      *  properties panel (double-click or context-menu "Edit"). They're independent so clicking around
      *  the canvas doesn't keep popping the right sidebar open. */
     private UUID editingNodeId = null;
+
+    /** Stack of (parent design, cluster id, cluster label) while navigating into ClusterNodes.
+     *  Empty when viewing the top-level factory design. Inside a cluster, edits to the design field
+     *  don't propagate to the FactoryStore (LOCKED clusters are view-only). */
+    private record ClusterFrame(Design parentDesign, UUID clusterId, String clusterLabel) {}
+    private final java.util.ArrayDeque<ClusterFrame> clusterStack = new java.util.ArrayDeque<>();
+    private boolean inCluster() { return !clusterStack.isEmpty(); }
     /** Last left-click on a node — used to detect double-click within {@link #DOUBLE_CLICK_MS}. */
     private UUID lastClickedNodeId = null;
     private long lastClickedAt = 0;
@@ -158,12 +166,33 @@ public class EditorScreen extends Screen {
 
     /** Set the current design AND propagate to the factory store so persistence stays in sync.
      *  Per-file auto-save keeps {@code cogwheel/factories/<name>.json} consistent with in-memory
-     *  state so users can share factories without thinking about Ctrl+S. */
+     *  state so users can share factories without thinking about Ctrl+S.
+     *
+     *  <p>Inside a cluster view, edits are local — they don't propagate to the FactoryStore.
+     *  LOCKED clusters are effectively view-only; any in-progress changes are discarded on exit. */
     private void setDesign(Design newDesign) {
         this.design = newDesign;
+        if (inCluster()) return;
         FactoryStore.get().updateCurrent(newDesign);
         Factory now = FactoryStore.get().current();
         if (now != null) FactoryFileStore.saveFactory(now);
+    }
+
+    private void enterCluster(ClusterNode cluster) {
+        clusterStack.push(new ClusterFrame(this.design, cluster.id(), cluster.label()));
+        this.design = cluster.innerDesign();
+        canvas.clearSelection();
+        canvas.setSelectedEdge(null);
+        editingNodeId = null;
+    }
+
+    private void exitCluster() {
+        if (clusterStack.isEmpty()) return;
+        ClusterFrame frame = clusterStack.pop();
+        this.design = frame.parentDesign;
+        canvas.clearSelection();
+        canvas.setSelectedEdge(null);
+        editingNodeId = null;
     }
 
     private void switchFactory(java.util.UUID factoryId) {
@@ -316,16 +345,29 @@ public class EditorScreen extends Screen {
     }
 
     /**
-     * Header strip at the top of the canvas viewport: "Cogwheel · {current factory name}".
-     * Width-fits the canvas so it doesn't overlap the toggle button or banner.
+     * Header strip at the top of the canvas viewport. When inside a cluster, appends a breadcrumb:
+     * {@code Cogwheel · MyFactory ▸ Precision Mechanism ×5}.
      */
     private void renderCanvasHeader(GuiGraphics graphics) {
         Factory cur = FactoryStore.get().current();
         String factoryName = cur != null ? cur.name() : "—";
-        String title = this.title.getString() + " · " + factoryName;
-        int tw = this.font.width(title);
+        StringBuilder title = new StringBuilder();
+        title.append(this.title.getString()).append(" · ").append(factoryName);
+        // Iterate stack oldest-first so the breadcrumb reads left-to-right by entry order.
+        java.util.Iterator<ClusterFrame> it = clusterStack.descendingIterator();
+        while (it.hasNext()) {
+            title.append("  ▸  ").append(it.next().clusterLabel());
+        }
+        String t = title.toString();
+        int tw = this.font.width(t);
         int tx = canvasX + (canvasW - tw) / 2;
-        graphics.drawString(this.font, title, tx, 8, 0xFFFFFFFF, true);
+        graphics.drawString(this.font, t, tx, 8, 0xFFFFFFFF, true);
+        if (inCluster()) {
+            // Tiny "← back" hint on the right edge of the header.
+            String hint = "← Esc";
+            graphics.drawString(this.font, hint,
+                    canvasX + canvasW - this.font.width(hint) - 8, 8, 0xFFA8A8B8, false);
+        }
     }
 
     private void renderBanner(GuiGraphics graphics) {
@@ -416,6 +458,10 @@ public class EditorScreen extends Screen {
                     canvas.setSelectedNodeId(node.id());
                 }
                 if (isDoubleClick) {
+                    if (node instanceof ClusterNode cluster) {
+                        enterCluster(cluster);
+                        return true;
+                    }
                     editingNodeId = node.id();
                     return true;
                 }
@@ -615,9 +661,7 @@ public class EditorScreen extends Screen {
             return;
         }
         if (ways.size() == 1) {
-            RecipeNode node = RecipeNodeFactory.fromRecipeEntry(ways.get(0), placement);
-            setDesign(design.withNodeAdded(node));
-            canvas.setSelectedNodeId(node.id());
+            placeRecipeNode(ways.get(0), placement);
             return;
         }
         ItemStack stack = new ItemStack(item);
@@ -625,11 +669,24 @@ public class EditorScreen extends Screen {
                 this,
                 Component.literal(stack.getHoverName().getString()),
                 ways,
-                chosen -> {
-                    RecipeNode node = RecipeNodeFactory.fromRecipeEntry(chosen, placement);
-                    setDesign(design.withNodeAdded(node));
-                    canvas.setSelectedNodeId(node.id());
-                }));
+                chosen -> placeRecipeNode(chosen, placement)));
+    }
+
+    /** Drop the right node type for the chosen recipe — sequenced_assembly recipes become a LOCKED
+     *  Cluster (their multi-step shape doesn't fit a single RecipeNode), everything else stays a
+     *  plain RecipeNode. */
+    private void placeRecipeNode(RecipeEntry chosen, Vec2 placement) {
+        Node node;
+        if (chosen.typeId().toString().equals("create:sequenced_assembly")
+                && net.neoforged.fml.ModList.get().isLoaded("create")) {
+            Node cluster = dev.kima.cogwheel.recipe.adapter.create
+                    .CreateSequencedAssemblyClusterBuilder.tryBuild(chosen.id(), placement);
+            node = (cluster != null) ? cluster : RecipeNodeFactory.fromRecipeEntry(chosen, placement);
+        } else {
+            node = RecipeNodeFactory.fromRecipeEntry(chosen, placement);
+        }
+        setDesign(design.withNodeAdded(node));
+        canvas.setSelectedNodeId(node.id());
     }
 
     private void addSourceNode(Item item) {
@@ -703,6 +760,10 @@ public class EditorScreen extends Screen {
             return new LimiterNode(newId, newPos, ln.limitPerMin());
         } else if (source instanceof FilterNode fn) {
             return new FilterNode(newId, newPos, fn.matchItem());
+        } else if (source instanceof ClusterNode cn) {
+            // Inner design is shared by reference — cluster contents are immutable records, so
+            // both copies see the same subgraph until the user mutates either's innerDesign field.
+            return new ClusterNode(newId, newPos, cn.label(), cn.innerDesign(), cn.kind(), cn.parallelism());
         }
         return source;
     }
@@ -745,6 +806,11 @@ public class EditorScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        // Esc while inside a cluster: pop back to parent design instead of closing the screen.
+        if (keyCode == GLFW.GLFW_KEY_ESCAPE && inCluster()) {
+            exitCluster();
+            return true;
+        }
         // R/U on a hovered sidebar item → open JEI recipes / uses. Check this BEFORE vanilla
         // widget consumption so it works while the search box exists but isn't focused.
         if (leftPanel != null && leftPanel.isOpen()) {
