@@ -86,6 +86,15 @@ public final class ContextMenu {
         int w = width();
         int h = height();
 
+        // Push the menu's Z above the typical item-icon Z range (~150-250). Item rendering uses
+        // a 3D model with its own Z values that overdraw later 2D fills — without translating up
+        // here, item icons elsewhere on the screen bleed through this menu's backdrop. Flush
+        // batched draws first so the translate applies cleanly to everything we draw below.
+        graphics.flush();
+        var pose = graphics.pose();
+        pose.pushPose();
+        pose.translate(0, 0, 400);
+
         graphics.fill(x, y, x + w, y + h, MENU_BG);
         graphics.fill(x - 1, y - 1, x + w + 1, y, MENU_BORDER);
         graphics.fill(x - 1, y + h, x + w + 1, y + h + 1, MENU_BORDER);
@@ -101,5 +110,8 @@ public final class ContextMenu {
             }
             graphics.drawString(font, options.get(i).label(), x + PADDING, rowY + 2, LABEL_FG, false);
         }
+
+        graphics.flush();
+        pose.popPose();
     }
 }

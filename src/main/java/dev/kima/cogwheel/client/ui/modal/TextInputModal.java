@@ -115,4 +115,16 @@ public final class TextInputModal extends Screen {
     public void onClose() {
         Minecraft.getInstance().setScreen(parent);
     }
+
+    // Suppress vanilla's panorama / blur backdrop — render() already paints its own dim layer.
+    // Without these overrides the parent screen blurs through the modal and the prompt + buttons
+    // come out looking fuzzy.
+    @Override
+    public void renderBackground(GuiGraphics g, int mouseX, int mouseY, float partialTick) {}
+
+    @Override
+    protected void renderBlurredBackground(float partialTick) {}
+
+    @Override
+    protected void renderMenuBackground(GuiGraphics g) {}
 }

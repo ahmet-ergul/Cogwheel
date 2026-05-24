@@ -67,6 +67,19 @@ public final class FactoryStore {
         }
     }
 
+    /** Replace an existing factory wholesale, matched by {@link Factory#id()}. Used by callers that
+     *  need to update multiple fields atomically (e.g. {@code withPowerSource} + {@code withRpm}). */
+    public void replaceFactory(Factory updated) {
+        if (updated == null) return;
+        for (int i = 0; i < factories.size(); i++) {
+            if (factories.get(i).id().equals(updated.id())) {
+                factories.set(i, updated);
+                dirty = true;
+                return;
+            }
+        }
+    }
+
     public void delete(UUID id) {
         boolean removed = factories.removeIf(f -> f.id().equals(id));
         if (!removed) return;

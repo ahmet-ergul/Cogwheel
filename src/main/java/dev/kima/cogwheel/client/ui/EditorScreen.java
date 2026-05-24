@@ -74,7 +74,11 @@ public class EditorScreen extends Screen {
             this::replaceEditingNode,
             this::onSwapRecipeRequested,
             () -> editingNodeId = null,
-            RebuildTrigger::index);
+            RebuildTrigger::index,
+            // inCluster supplier — drives the "Inherit RPM from <factory|cluster>" label.
+            this::inCluster,
+            // ambient RPM supplier — walks the cluster stack to find the right "parent" RPM.
+            () -> effectiveRpmForCurrentContext(FactoryStore.get().current()));
     private Design design;
     private boolean panning = false;
     private int canvasX, canvasY, canvasW, canvasH;
@@ -165,7 +169,8 @@ public class EditorScreen extends Screen {
                             this::addLimiterNode,
                             this::addVoidNode,
                             this::addClusterNode,
-                            this::addLoopNode),
+                            this::addLoopNode,
+                            this::applyFactoryPower),
                     null);
             leftPanel.open();
         } else {
@@ -308,7 +313,8 @@ public class EditorScreen extends Screen {
         canvasX = CANVAS_MARGIN_OTHER + leftSpace;
         canvasY = CANVAS_MARGIN_TOP;
         canvasW = this.width - canvasX - CANVAS_MARGIN_OTHER - rightSpace;
-        canvasH = this.height - CANVAS_MARGIN_TOP - CANVAS_MARGIN_OTHER - SolverOverlay.HEIGHT;
+        canvasH = this.height - CANVAS_MARGIN_TOP - CANVAS_MARGIN_OTHER
+                - SolverOverlay.HEIGHT - SolverOverlay.POWER_STRIP_HEIGHT;
 
         int panelH = this.height - CANVAS_MARGIN_TOP - CANVAS_MARGIN_OTHER;
         if (leftPanel != null) {
@@ -335,7 +341,15 @@ public class EditorScreen extends Screen {
             properties.setSelected(null);
         }
 
-        CanvasRenderer.render(graphics, canvas, design, canvasX, canvasY, canvasW, canvasH, inLockedCluster());
+        // Run the solver FIRST so the per-node SU map is available to the canvas renderer (which
+        // draws a small SU badge under each Create-backed node so the user can verify exactly what
+        // each node contributes to the total — useful for diagnosing setting mismatches).
+        Factory currentFactory = FactoryStore.get().current();
+        int currentRpm = effectiveRpmForCurrentContext(currentFactory);
+        SolverResult solverResult = Solver.solve(design, RebuildTrigger.index(), currentRpm);
+
+        CanvasRenderer.render(graphics, canvas, design, canvasX, canvasY, canvasW, canvasH,
+                inLockedCluster(), solverResult.nodeSuDraw());
         if (leftPanel != null && leftPanel.isOpen()) {
             leftPanel.render(graphics, mouseX, mouseY);
         }
@@ -343,8 +357,8 @@ public class EditorScreen extends Screen {
             properties.render(graphics, mouseX, mouseY);
         }
 
-        SolverResult solverResult = Solver.solve(design, RebuildTrigger.index());
-        SolverOverlay.render(graphics, solverResult, canvasX, canvasY + canvasH, canvasW);
+        SolverOverlay.render(graphics, solverResult, canvasX, canvasY + canvasH, canvasW,
+                currentFactory);
 
         renderToggleButton(graphics, mouseX, mouseY);
 
@@ -517,6 +531,13 @@ public class EditorScreen extends Screen {
                 }
                 if (!canvas.isSelected(node.id())) {
                     canvas.setSelectedNodeId(node.id());
+                    // If the properties panel is currently open on a DIFFERENT node, re-target it
+                    // to the just-clicked one. Without this re-sync, the user can visually select
+                    // a new node but the panel + slider drags would still target the previously
+                    // opened node — silent "I'm editing the wrong thing" bug.
+                    if (!locked && editingNodeId != null && !editingNodeId.equals(node.id())) {
+                        editingNodeId = node.id();
+                    }
                 }
                 if (isDoubleClick) {
                     // Double-clicking still navigates INTO nested clusters even when the outer
@@ -745,13 +766,36 @@ public class EditorScreen extends Screen {
         return canvas.screenToWorld(canvasX + canvasW / 2.0, canvasY + canvasH / 2.0);
     }
 
-    private void addRecipeNode(Item item) {
+    /** Walks the cluster stack outermost → innermost, threading the effective RPM through each
+     *  cluster's optional override. At the root: factory RPM. Inside a cluster: the cluster's
+     *  rpmOverride if set, else inherited from the level above. Used as the {@code factoryRpm}
+     *  parameter to {@link Solver#solve(Design, RecipeIndex, int)} so RPM cascades correctly
+     *  when the user is viewing a cluster's inner design. */
+    private int effectiveRpmForCurrentContext(Factory currentFactory) {
+        int rpm = currentFactory != null ? currentFactory.rpm() : Factory.DEFAULT_RPM;
+        // clusterStack is innermost-first; iterate descending (outermost-first) so each frame's
+        // rpmOverride can override the running value.
+        java.util.Iterator<ClusterFrame> it = clusterStack.descendingIterator();
+        while (it.hasNext()) {
+            ClusterFrame frame = it.next();
+            Node n = frame.parentDesign().findNode(frame.clusterId());
+            if (n instanceof ClusterNode cn && cn.rpmOverride().isPresent()) {
+                rpm = cn.rpmOverride().get();
+            }
+        }
+        return rpm;
+    }
+
+    /** Drop a recipe node at the cursor's drop position. Screen coords → world coords via the
+     *  canvas's pan/zoom transform — drops always land where the user released, not at a
+     *  fixed canvas center. */
+    private void addRecipeNode(Item item, double screenX, double screenY) {
         var index = RebuildTrigger.index();
         List<RecipeEntry> ways = index.waysToProduce(item);
-        Vec2 placement = canvasCenter();
+        Vec2 placement = canvas.screenToWorld(screenX, screenY);
 
         if (ways.isEmpty()) {
-            // No recipes — fall through to a source node so the click does SOMETHING.
+            // No recipes — fall through to a source node so the drop does SOMETHING.
             addSourceAt(item, placement);
             return;
         }
@@ -784,8 +828,8 @@ public class EditorScreen extends Screen {
         canvas.setSelectedNodeId(node.id());
     }
 
-    private void addSourceNode(Item item) {
-        addSourceAt(item, canvasCenter());
+    private void addSourceNode(Item item, double sx, double sy) {
+        addSourceAt(item, canvas.screenToWorld(sx, sy));
     }
 
     private void addSourceAt(Item item, Vec2 placement) {
@@ -794,27 +838,30 @@ public class EditorScreen extends Screen {
         canvas.setSelectedNodeId(node.id());
     }
 
-    private void addSinkNode(Item item) {
-        SinkNode node = new SinkNode(UUID.randomUUID(), canvasCenter(), new ItemStack(item));
+    private void addSinkNode(Item item, double sx, double sy) {
+        SinkNode node = new SinkNode(UUID.randomUUID(), canvas.screenToWorld(sx, sy), new ItemStack(item));
         setDesign(design.withNodeAdded(node));
         canvas.setSelectedNodeId(node.id());
     }
 
-    private void addSplitterNode() {
-        SplitterNode node = new SplitterNode(UUID.randomUUID(), canvasCenter(), SplitterNode.DEFAULT_OUTPUTS);
+    private void addSplitterNode(double sx, double sy) {
+        SplitterNode node = new SplitterNode(UUID.randomUUID(),
+                canvas.screenToWorld(sx, sy), SplitterNode.DEFAULT_OUTPUTS);
         setDesign(design.withNodeAdded(node));
         canvas.setSelectedNodeId(node.id());
     }
 
-    private void addMergerNode() {
-        MergerNode node = new MergerNode(UUID.randomUUID(), canvasCenter(), MergerNode.DEFAULT_INPUTS);
+    private void addMergerNode(double sx, double sy) {
+        MergerNode node = new MergerNode(UUID.randomUUID(),
+                canvas.screenToWorld(sx, sy), MergerNode.DEFAULT_INPUTS);
         setDesign(design.withNodeAdded(node));
         canvas.setSelectedNodeId(node.id());
     }
 
-    private void addClusterNode() {
+    private void addClusterNode(double sx, double sy) {
         Design empty = new Design("Cluster", List.of(), List.of());
-        ClusterNode node = new ClusterNode(UUID.randomUUID(), canvasCenter(),
+        ClusterNode node = new ClusterNode(UUID.randomUUID(),
+                canvas.screenToWorld(sx, sy),
                 "New Cluster", empty, ClusterNode.Kind.USER, 1);
         setDesign(design.withNodeAdded(node));
         canvas.setSelectedNodeId(node.id());
@@ -946,26 +993,47 @@ public class EditorScreen extends Screen {
         canvas.setSelectedNodeId(cluster.id());
     }
 
-    private void addLimiterNode() {
-        LimiterNode node = new LimiterNode(UUID.randomUUID(), canvasCenter(), LimiterNode.DEFAULT_LIMIT);
+    private void addLimiterNode(double sx, double sy) {
+        LimiterNode node = new LimiterNode(UUID.randomUUID(),
+                canvas.screenToWorld(sx, sy), LimiterNode.DEFAULT_LIMIT);
         setDesign(design.withNodeAdded(node));
         canvas.setSelectedNodeId(node.id());
     }
 
-    private void addVoidNode() {
-        VoidNode node = new VoidNode(UUID.randomUUID(), canvasCenter(), VoidNode.DEFAULT_INPUTS);
+    private void addVoidNode(double sx, double sy) {
+        VoidNode node = new VoidNode(UUID.randomUUID(),
+                canvas.screenToWorld(sx, sy), VoidNode.DEFAULT_INPUTS);
         setDesign(design.withNodeAdded(node));
         canvas.setSelectedNodeId(node.id());
     }
 
-    private void addLoopNode() {
-        LoopNode node = new LoopNode(UUID.randomUUID(), canvasCenter(), LoopNode.DEFAULT_LOOPS);
+    private void addLoopNode(double sx, double sy) {
+        LoopNode node = new LoopNode(UUID.randomUUID(),
+                canvas.screenToWorld(sx, sy), LoopNode.DEFAULT_LOOPS);
         setDesign(design.withNodeAdded(node));
         canvas.setSelectedNodeId(node.id());
     }
 
-    private void addOutputNode(Item item) {
-        OutputNode node = dev.kima.cogwheel.recipe.RecipeNodeFactory.output(item, canvasCenter());
+    /** Apply a power-source + RPM change to a factory. Doesn't touch its design — just rewrites
+     *  the wrapping {@link Factory} record and flushes to disk. */
+    private void applyFactoryPower(UUID factoryId, Optional<UUID> powerSourceId, int rpm) {
+        Factory f = FactoryStore.get().findById(factoryId);
+        if (f == null) return;
+        Factory updated = f.withPowerSource(powerSourceId).withRpm(rpm);
+        // Mutate via the store's internal list directly — FactoryStore doesn't expose a generic
+        // "replace by id" helper, but updateCurrent does it for the current factory. For non-current
+        // factories we have to nudge through the list.
+        if (factoryId.equals(FactoryStore.get().currentId())) {
+            // Keep design in sync; updateCurrent uses the new field set via withDesign.
+            FactoryStore.get().replaceFactory(updated);
+        } else {
+            FactoryStore.get().replaceFactory(updated);
+        }
+        dev.kima.cogwheel.persistence.FactoryFileStore.saveFactory(updated);
+    }
+
+    private void addOutputNode(Item item, double sx, double sy) {
+        OutputNode node = dev.kima.cogwheel.recipe.RecipeNodeFactory.output(item, canvas.screenToWorld(sx, sy));
         setDesign(design.withNodeAdded(node));
         canvas.setSelectedNodeId(node.id());
     }
@@ -1005,8 +1073,11 @@ public class EditorScreen extends Screen {
         Vec2 newPos = new Vec2(source.position().x() + dx, source.position().y() + dy);
         UUID newId = UUID.randomUUID();
         if (source instanceof RecipeNode rn) {
+            // Use the full constructor so the clone preserves rpmOverride — the back-compat
+            // 8-arg form silently drops it, which is a real source-of-confusion when the user
+            // sees the original's RPM override but the clone is silently running at factory RPM.
             return new RecipeNode(newId, newPos, rn.recipeId(), rn.title(), rn.icon(),
-                    rn.inputs(), rn.outputs(), rn.parallelism());
+                    rn.inputs(), rn.outputs(), rn.parallelism(), rn.rpmOverride());
         } else if (source instanceof SourceNode sn) {
             return new SourceNode(newId, newPos, sn.item(), sn.kind(), sn.externalRef());
         } else if (source instanceof SinkNode sn) {

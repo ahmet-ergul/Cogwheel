@@ -74,19 +74,42 @@ public final class PropertiesPanel {
     private final Runnable onSwapRecipe;
     private final Runnable onClose;
     private final Supplier<RecipeIndex> indexSupplier;
+    /** Returns true when the editor is currently viewing a cluster's inner design. The properties
+     *  panel uses this to label the "Inherit RPM from <X>" checkbox correctly. */
+    private final java.util.function.BooleanSupplier inClusterSupplier;
+    /** Source of the effective ambient RPM (factory's RPM at root, cluster's effective RPM inside
+     *  a cluster). Reused when displaying "(inheriting N RPM)" hints. */
+    private final java.util.function.IntSupplier ambientRpmSupplier;
 
     private Node selected;
+    /** Latched while inside a frame's render so click-handling sees the same value the render did. */
+    private boolean inCluster;
     private int panelX;
     private int panelY;
     private int panelH;
     private boolean draggingSlider;
+    /** Which slider the user grabbed — RecipeNode has two (parallelism + RPM override); all other
+     *  nodes have one. Default PARALLELISM so existing call paths still work. */
+    private SliderKind draggingSliderKind = SliderKind.PARALLELISM;
+    private enum SliderKind { PARALLELISM, RECIPE_RPM, CLUSTER_RPM }
 
+    /** Legacy constructor for callers that don't know about cluster context. */
     public PropertiesPanel(Consumer<Node> onNodeUpdated, Runnable onSwapRecipe, Runnable onClose,
                             Supplier<RecipeIndex> indexSupplier) {
+        this(onNodeUpdated, onSwapRecipe, onClose, indexSupplier, () -> false,
+                () -> Factory.DEFAULT_RPM);
+    }
+
+    public PropertiesPanel(Consumer<Node> onNodeUpdated, Runnable onSwapRecipe, Runnable onClose,
+                            Supplier<RecipeIndex> indexSupplier,
+                            java.util.function.BooleanSupplier inClusterSupplier,
+                            java.util.function.IntSupplier ambientRpmSupplier) {
         this.onNodeUpdated = onNodeUpdated;
         this.onSwapRecipe = onSwapRecipe;
         this.onClose = onClose;
         this.indexSupplier = indexSupplier;
+        this.inClusterSupplier = inClusterSupplier;
+        this.ambientRpmSupplier = ambientRpmSupplier;
     }
 
     public void setSelected(Node node) {
@@ -104,6 +127,8 @@ public final class PropertiesPanel {
     }
 
     public void render(GuiGraphics graphics, int mouseX, int mouseY) {
+        // Latch cluster context for this frame so render() and mouseClicked() see the same value.
+        this.inCluster = inClusterSupplier.getAsBoolean();
         graphics.fill(panelX, panelY, panelX + WIDTH, panelY + panelH, BG_COLOR);
         graphics.fill(panelX - 1, panelY, panelX, panelY + panelH, BORDER);
 
@@ -188,7 +213,30 @@ public final class PropertiesPanel {
         renderSlider(graphics, panelX + PADDING, sliderY, WIDTH - PADDING * 2,
                 cluster.parallelism(), PARALLELISM_MIN, PARALLELISM_MAX);
 
-        int lockY = sliderY + SLIDER_HEIGHT + PADDING * 2;
+        // RPM strip — every cluster has one regardless of kind. When set (override), the cluster's
+        // RPM is used as the "factory RPM" for every inner Create node that inherits.
+        int rpmY = sliderY + SLIDER_HEIGHT + PADDING * 2;
+        int parentRpm = currentFactoryRpm();
+        boolean inheriting = cluster.rpmOverride().isEmpty();
+        int effectiveRpm = cluster.rpmOverride().orElse(parentRpm);
+        String contextLabel = inCluster ? "outer cluster" : "factory";
+        renderCheckbox(graphics, font, panelX + PADDING, rpmY, inheriting,
+                "Inherit RPM from " + contextLabel, mouseX, mouseY);
+        rpmY += ROW_HEIGHT;
+        if (!inheriting) {
+            ScaledUi.drawString(graphics, font, "RPM: " + effectiveRpm,
+                    panelX + PADDING, rpmY, TEXT, false);
+            int clRpmSliderY = rpmY + ROW_HEIGHT;
+            renderSlider(graphics, panelX + PADDING, clRpmSliderY, WIDTH - PADDING * 2,
+                    effectiveRpm, Factory.MIN_RPM, Factory.MAX_RPM);
+            rpmY = clRpmSliderY + SLIDER_HEIGHT + PADDING;
+        } else {
+            ScaledUi.drawString(graphics, font, "(inheriting " + parentRpm + " RPM)",
+                    panelX + PADDING, rpmY, TEXT_DIM, false);
+            rpmY += ROW_HEIGHT;
+        }
+
+        int lockY = rpmY + PADDING;
         String lockLabel = cluster.kind() == ClusterNode.Kind.LOCKED ? "🔒 Locked — click to unlock" : "Unlocked — click to lock";
         drawButton(graphics, panelX + PADDING, lockY, WIDTH - PADDING * 2, BUTTON_HEIGHT,
                 lockLabel, mouseX, mouseY);
@@ -233,6 +281,75 @@ public final class PropertiesPanel {
         if (v >= 1000) return String.format("%.1fk", v / 1000);
         if (v >= 100) return String.format("%.0f", v);
         return String.format("%.1f", v);
+    }
+
+    private String formatSu(double v) {
+        if (v >= 1_000_000) return String.format("%.2fM", v / 1_000_000);
+        if (v >= 1_000) return String.format("%.1fk", v / 1_000);
+        return String.format("%.0f", v);
+    }
+
+    /** Ambient RPM the currently-displayed design inherits from — the factory's RPM at the root,
+     *  or the cluster's effective RPM when viewing a cluster's inner design. */
+    private int currentFactoryRpm() {
+        return ambientRpmSupplier.getAsInt();
+    }
+
+    /** Small ☐/✔ + label checkbox row used by the RPM strips. Returns the column-width of the
+     *  hit area so callers can position the label tooltip / overflow correctly. */
+    private void renderCheckbox(GuiGraphics g, Font font, int x, int y, boolean checked,
+                                 String label, int mouseX, int mouseY) {
+        int box = 10;
+        boolean hover = mouseX >= x && mouseX < x + WIDTH - PADDING * 2
+                && mouseY >= y && mouseY < y + ROW_HEIGHT;
+        // Box.
+        int boxColor = checked ? SLIDER_FILL : BUTTON_BG;
+        g.fill(x, y + 1, x + box, y + box + 1, boxColor);
+        // Border.
+        g.fill(x, y + 1, x + box, y + 2, BORDER);
+        g.fill(x, y + box, x + box, y + box + 1, BORDER);
+        g.fill(x, y + 1, x + 1, y + box + 1, BORDER);
+        g.fill(x + box - 1, y + 1, x + box, y + box + 1, BORDER);
+        if (checked) {
+            // Tick mark — two diagonal pixel runs forming a check.
+            g.fill(x + 3, y + 5, x + 4, y + 6, TEXT);
+            g.fill(x + 4, y + 6, x + 5, y + 7, TEXT);
+            g.fill(x + 5, y + 5, x + 6, y + 6, TEXT);
+            g.fill(x + 6, y + 4, x + 7, y + 5, TEXT);
+            g.fill(x + 7, y + 3, x + 8, y + 4, TEXT);
+        }
+        int textColor = hover ? 0xFFFFCC55 : TEXT;
+        ScaledUi.drawString(g, font, label, x + box + 4, y + 2, textColor);
+    }
+
+    /** Hit-tests the checkbox row at {@code (x, y)} — full row width, so clicking the label
+     *  toggles too. */
+    private boolean hitsCheckbox(double sx, double sy, int x, int y) {
+        return sx >= x && sx < x + WIDTH - PADDING * 2 && sy >= y && sy < y + ROW_HEIGHT;
+    }
+
+    /** Vertical pixels reserved by the RPM strip in the RecipeNode props pane. New layout:
+     *  <ul>
+     *    <li>1 ROW_HEIGHT: checkbox row</li>
+     *    <li>If unchecked (override): ROW_HEIGHT (label) + SLIDER_HEIGHT + PADDING</li>
+     *    <li>If checked (inheriting): ROW_HEIGHT (dim hint)</li>
+     *    <li>+ ROW_HEIGHT (SU readout) + PADDING</li>
+     *  </ul> */
+    private int recipeRpmStripHeight(RecipeNode rn) {
+        if (indexSupplier == null || indexSupplier.get() == null) return 0;
+        RecipeEntry e = indexSupplier.get().byId(rn.recipeId());
+        if (e == null) return 0;
+        boolean isCreate = dev.kima.cogwheel.solver.PowerCalculator.impactPerRpm(e.typeId()) > 0;
+        if (!isCreate) return 0;
+        boolean inheriting = rn.rpmOverride().isEmpty();
+        int h = ROW_HEIGHT; // checkbox
+        if (!inheriting) {
+            h += ROW_HEIGHT + SLIDER_HEIGHT + PADDING; // label + slider + spacing
+        } else {
+            h += ROW_HEIGHT; // dim "(inheriting N RPM)" hint
+        }
+        h += ROW_HEIGHT + PADDING; // SU readout + spacing
+        return h;
     }
 
     /** Log-scale slider for the limiter (we want fine control near 1/min, coarse near 10k/min). */
@@ -318,7 +435,43 @@ public final class PropertiesPanel {
         renderSlider(graphics, panelX + PADDING, sliderY, WIDTH - PADDING * 2,
                 rn.parallelism(), PARALLELISM_MIN, PARALLELISM_MAX);
 
+        // RPM strip — Create recipes only. Shows: a [✔/☐] checkbox "Inherit RPM from <context>",
+        // and (when unchecked) the RPM slider + value + SU readout. Checked = use the inherited
+        // RPM verbatim; unchecked = the node carries its own rpmOverride and the slider edits it.
         int btnY = sliderY + SLIDER_HEIGHT + PADDING * 2;
+        boolean isCreate = entry != null
+                && dev.kima.cogwheel.solver.PowerCalculator.impactPerRpm(entry.typeId()) > 0;
+        if (isCreate) {
+            int parentRpm = currentFactoryRpm();
+            boolean inheriting = rn.rpmOverride().isEmpty();
+            int effectiveRpm = rn.rpmOverride().orElse(parentRpm);
+            String contextLabel = inCluster ? "cluster" : "factory";
+            // Checkbox row.
+            renderCheckbox(graphics, font, panelX + PADDING, btnY, inheriting,
+                    "Inherit RPM from " + contextLabel, mouseX, mouseY);
+            btnY += ROW_HEIGHT;
+            if (!inheriting) {
+                ScaledUi.drawString(graphics, font, "RPM: " + effectiveRpm,
+                        panelX + PADDING, btnY, TEXT, false);
+                int rpmSliderY = btnY + ROW_HEIGHT;
+                renderSlider(graphics, panelX + PADDING, rpmSliderY, WIDTH - PADDING * 2,
+                        effectiveRpm, dev.kima.cogwheel.model.Factory.MIN_RPM,
+                        dev.kima.cogwheel.model.Factory.MAX_RPM);
+                btnY = rpmSliderY + SLIDER_HEIGHT + PADDING;
+            } else {
+                // Even when inheriting, show the inherited value as a dim hint so the user can
+                // verify what the node is actually running at without flipping the checkbox.
+                ScaledUi.drawString(graphics, font, "(inheriting " + parentRpm + " RPM)",
+                        panelX + PADDING, btnY, TEXT_DIM, false);
+                btnY += ROW_HEIGHT;
+            }
+            // Per-recipe SU readout.
+            double su = dev.kima.cogwheel.solver.PowerCalculator.suFor(entry.typeId(), effectiveRpm)
+                    * rn.parallelism();
+            ScaledUi.drawString(graphics, font, "SU: " + formatSu(su),
+                    panelX + PADDING, btnY, TEXT_DIM, false);
+            btnY += ROW_HEIGHT + PADDING;
+        }
         drawButton(graphics, panelX + PADDING, btnY, WIDTH - PADDING * 2, BUTTON_HEIGHT,
                 "Swap recipe…", mouseX, mouseY);
 
@@ -467,10 +620,37 @@ public final class PropertiesPanel {
             int sliderY = rContentY + ROW_HEIGHT;
             if (hits(sx, sy, panelX + PADDING, sliderY, WIDTH - PADDING * 2, SLIDER_HEIGHT)) {
                 draggingSlider = true;
+                draggingSliderKind = SliderKind.PARALLELISM;
                 applySliderDrag(sx);
                 return true;
             }
-            int btnY = sliderY + SLIDER_HEIGHT + PADDING * 2;
+            // RPM strip — Create recipes only. Layout: checkbox, then either a slider row (when
+            // unchecked) or a dim hint (when checked).
+            int rpmStripH = recipeRpmStripHeight(rn);
+            if (rpmStripH > 0) {
+                int checkboxY = sliderY + SLIDER_HEIGHT + PADDING * 2;
+                if (hitsCheckbox(sx, sy, panelX + PADDING, checkboxY)) {
+                    // Toggle inherit/override. When flipping ON inheritance: clear override. When
+                    // flipping OFF (gaining override): seed it with the currently-effective RPM so
+                    // the slider doesn't snap to MIN.
+                    if (rn.rpmOverride().isPresent()) {
+                        onNodeUpdated.accept(rn.withRpmOverride(java.util.Optional.empty()));
+                    } else {
+                        onNodeUpdated.accept(rn.withRpmOverride(java.util.Optional.of(currentFactoryRpm())));
+                    }
+                    return true;
+                }
+                if (rn.rpmOverride().isPresent()) {
+                    int rpmSliderY = checkboxY + ROW_HEIGHT + ROW_HEIGHT;
+                    if (hits(sx, sy, panelX + PADDING, rpmSliderY, WIDTH - PADDING * 2, SLIDER_HEIGHT)) {
+                        draggingSlider = true;
+                        draggingSliderKind = SliderKind.RECIPE_RPM;
+                        applySliderDrag(sx);
+                        return true;
+                    }
+                }
+            }
+            int btnY = sliderY + SLIDER_HEIGHT + PADDING * 2 + rpmStripH;
             if (hits(sx, sy, panelX + PADDING, btnY, WIDTH - PADDING * 2, BUTTON_HEIGHT)) {
                 onSwapRecipe.run();
                 return true;
@@ -533,11 +713,36 @@ public final class PropertiesPanel {
             int sliderY = parY + ROW_HEIGHT;
             if (hits(sx, sy, panelX + PADDING, sliderY, WIDTH - PADDING * 2, SLIDER_HEIGHT)) {
                 draggingSlider = true;
+                draggingSliderKind = SliderKind.PARALLELISM;
                 applySliderDrag(sx);
                 return true;
             }
+            // Cluster RPM strip — same checkbox + conditional slider pattern as RecipeNode.
+            int rpmY = sliderY + SLIDER_HEIGHT + PADDING * 2;
+            boolean clInheriting = cluster.rpmOverride().isEmpty();
+            if (hitsCheckbox(sx, sy, panelX + PADDING, rpmY)) {
+                if (cluster.rpmOverride().isPresent()) {
+                    onNodeUpdated.accept(cluster.withRpmOverride(java.util.Optional.empty()));
+                } else {
+                    onNodeUpdated.accept(cluster.withRpmOverride(java.util.Optional.of(currentFactoryRpm())));
+                }
+                return true;
+            }
+            int rpmStripEnd;
+            if (!clInheriting) {
+                int clRpmSliderY = rpmY + ROW_HEIGHT + ROW_HEIGHT;
+                if (hits(sx, sy, panelX + PADDING, clRpmSliderY, WIDTH - PADDING * 2, SLIDER_HEIGHT)) {
+                    draggingSlider = true;
+                    draggingSliderKind = SliderKind.CLUSTER_RPM;
+                    applySliderDrag(sx);
+                    return true;
+                }
+                rpmStripEnd = clRpmSliderY + SLIDER_HEIGHT + PADDING;
+            } else {
+                rpmStripEnd = rpmY + ROW_HEIGHT + ROW_HEIGHT;
+            }
             // Lock toggle button
-            int lockY = sliderY + SLIDER_HEIGHT + PADDING * 2;
+            int lockY = rpmStripEnd + PADDING;
             if (hits(sx, sy, panelX + PADDING, lockY, WIDTH - PADDING * 2, BUTTON_HEIGHT)) {
                 ClusterNode.Kind newKind = cluster.kind() == ClusterNode.Kind.LOCKED
                         ? ClusterNode.Kind.USER : ClusterNode.Kind.LOCKED;
@@ -557,6 +762,7 @@ public final class PropertiesPanel {
     public boolean mouseReleased(double sx, double sy, int button) {
         if (draggingSlider) {
             draggingSlider = false;
+            draggingSliderKind = SliderKind.PARALLELISM; // reset so the next drag starts cleanly
             return true;
         }
         return false;
@@ -569,9 +775,16 @@ public final class PropertiesPanel {
         double frac = Math.max(0, Math.min(1, (sx - x) / w));
 
         if (selected instanceof RecipeNode rn) {
-            int newValue = (int) Math.round(PARALLELISM_MIN + frac * (PARALLELISM_MAX - PARALLELISM_MIN));
-            if (newValue != rn.parallelism()) {
-                onNodeUpdated.accept(rn.withParallelism(newValue));
+            if (draggingSliderKind == SliderKind.RECIPE_RPM) {
+                int newRpm = (int) Math.round(Factory.MIN_RPM + frac * (Factory.MAX_RPM - Factory.MIN_RPM));
+                if (newRpm != rn.rpmOverride().orElse(-1)) {
+                    onNodeUpdated.accept(rn.withRpmOverride(Optional.of(newRpm)));
+                }
+            } else {
+                int newValue = (int) Math.round(PARALLELISM_MIN + frac * (PARALLELISM_MAX - PARALLELISM_MIN));
+                if (newValue != rn.parallelism()) {
+                    onNodeUpdated.accept(rn.withParallelism(newValue));
+                }
             }
         } else if (selected instanceof SplitterNode splitter) {
             int newValue = (int) Math.round(SplitterNode.MIN_OUTPUTS
@@ -604,9 +817,16 @@ public final class PropertiesPanel {
                 onNodeUpdated.accept(loop.withLoopCount(newValue));
             }
         } else if (selected instanceof ClusterNode cluster) {
-            int newValue = (int) Math.round(PARALLELISM_MIN + frac * (PARALLELISM_MAX - PARALLELISM_MIN));
-            if (newValue != cluster.parallelism()) {
-                onNodeUpdated.accept(cluster.withParallelism(newValue));
+            if (draggingSliderKind == SliderKind.CLUSTER_RPM) {
+                int newRpm = (int) Math.round(Factory.MIN_RPM + frac * (Factory.MAX_RPM - Factory.MIN_RPM));
+                if (newRpm != cluster.rpmOverride().orElse(-1)) {
+                    onNodeUpdated.accept(cluster.withRpmOverride(java.util.Optional.of(newRpm)));
+                }
+            } else {
+                int newValue = (int) Math.round(PARALLELISM_MIN + frac * (PARALLELISM_MAX - PARALLELISM_MIN));
+                if (newValue != cluster.parallelism()) {
+                    onNodeUpdated.accept(cluster.withParallelism(newValue));
+                }
             }
         }
     }

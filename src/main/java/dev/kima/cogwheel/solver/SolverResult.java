@@ -22,9 +22,20 @@ public record SolverResult(
         Map<UUID, Double> nodeCyclesPerMin,
         Map<Item, Double> unmetInputs,
         Map<Item, Double> finalOutputs,
-        Map<Item, Double> unusedOutputs
+        Map<Item, Double> unusedOutputs,
+        Map<UUID, Double> nodeSuDraw,
+        double totalSu
 ) {
+    /** Back-compat constructor for callers that don't care about SU. */
+    public SolverResult(boolean hasCycle, Map<Edge, Double> edgeRates,
+                         Map<UUID, Double> nodeCyclesPerMin, Map<Item, Double> unmetInputs,
+                         Map<Item, Double> finalOutputs, Map<Item, Double> unusedOutputs) {
+        this(hasCycle, edgeRates, nodeCyclesPerMin, unmetInputs, finalOutputs, unusedOutputs,
+                Map.of(), 0.0);
+    }
+
     public static SolverResult cycle() {
-        return new SolverResult(true, Map.of(), Map.of(), Map.of(), Map.of(), Map.of());
+        return new SolverResult(true, Map.of(), Map.of(), Map.of(), Map.of(), Map.of(),
+                Map.of(), 0.0);
     }
 }

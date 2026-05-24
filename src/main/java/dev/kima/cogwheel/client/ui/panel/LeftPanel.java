@@ -39,23 +39,34 @@ public final class LeftPanel {
     private static final int TEXT_DIM = 0xFFA8A8B8;
     private static final int BUTTON_HOVER = 0xFF3A4868;
 
+    /** Adds an item-bound node at the user's drop point. Coordinates are SCREEN-space; the
+     *  EditorScreen converts via {@code Canvas.screenToWorld} before placement. */
+    @FunctionalInterface
+    public interface ItemAdder { void apply(Item item, double screenX, double screenY); }
+
+    /** Adds a no-item logic node at the user's drop point. Coordinates are SCREEN-space. */
+    @FunctionalInterface
+    public interface PosAdder { void apply(double screenX, double screenY); }
+
     public record Callbacks(
-            Consumer<Item> onAddRecipe,
-            Consumer<Item> onAddSource,
-            Consumer<Item> onAddSink,
-            Runnable onAddSplitter,
-            Runnable onAddMerger,
-            Consumer<Item> onAddOutput,
+            ItemAdder onAddRecipe,
+            ItemAdder onAddSource,
+            ItemAdder onAddSink,
+            PosAdder onAddSplitter,
+            PosAdder onAddMerger,
+            ItemAdder onAddOutput,
             java.util.function.Consumer<java.util.UUID> onSwitchFactory,
             Consumer<String> onCreateFactory,
             java.util.function.Consumer<java.util.UUID> onDeleteFactory,
             java.util.function.BiConsumer<java.util.UUID, String> onRenameFactory,
             Runnable onRefreshFactories,
             Runnable onOpenFactoriesFolder,
-            Runnable onAddLimiter,
-            Runnable onAddVoid,
-            Runnable onAddCluster,
-            Runnable onAddLoop
+            PosAdder onAddLimiter,
+            PosAdder onAddVoid,
+            PosAdder onAddCluster,
+            PosAdder onAddLoop,
+            /** (factoryId, powerSourceId, rpm) — write through to the FactoryStore. */
+            dev.kima.cogwheel.client.ui.panel.FactoriesPage.PowerApplier onApplyFactoryPower
     ) {}
 
     /** Mutable so the panel survives a parent-screen re-init: the WidgetHost is bound to a Screen
@@ -244,12 +255,15 @@ public final class LeftPanel {
         return pageStack.peek().mouseReleased(sx, sy, button);
     }
 
-    /** Notify the current page of mouse movement during a drag — used by ItemListPage to promote
-     *  a click into a drag once the cursor crosses the drag threshold. */
+    /** Notify the current page of mouse movement during a drag — used by ItemListPage AND
+     *  CategoriesPage to promote a click into a drag once the cursor crosses the drag threshold. */
     public void mouseDragged(double sx, double sy) {
         if (!open || pageStack.isEmpty()) return;
-        if (pageStack.peek() instanceof ItemListPage ilp) {
+        LeftPanelPage top = pageStack.peek();
+        if (top instanceof ItemListPage ilp) {
             ilp.mouseDragged(sx, sy);
+        } else if (top instanceof CategoriesPage cp) {
+            cp.mouseDragged(sx, sy);
         }
     }
 
@@ -314,6 +328,12 @@ public final class LeftPanel {
                                 true,
                                 () -> pushPage(new FactoriesPage(callbacks))),
                         new CategoriesPage.Category(
+                                new ItemStack(Items.LIGHTNING_ROD),
+                                Component.translatable("screen.cogwheel.category.power"),
+                                Component.translatable("screen.cogwheel.category.power.subtitle"),
+                                true,
+                                () -> pushPage(new PowerSourcesPage())),
+                        new CategoriesPage.Category(
                                 new ItemStack(Items.REDSTONE),
                                 Component.translatable("screen.cogwheel.category.settings"),
                                 Component.translatable("screen.cogwheel.category.settings.subtitle"),
@@ -336,42 +356,36 @@ public final class LeftPanel {
         return new CategoriesPage(
                 Component.translatable("screen.cogwheel.category.logic"),
                 List.of(
-                        new CategoriesPage.Category(
+                        CategoriesPage.Category.dragOnly(
                                 new ItemStack(Items.HOPPER),
                                 Component.translatable("screen.cogwheel.logic.splitter"),
                                 Component.translatable("screen.cogwheel.logic.splitter.subtitle"),
-                                true,
-                                () -> callbacks.onAddSplitter().run()),
-                        new CategoriesPage.Category(
+                                (sx, sy) -> callbacks.onAddSplitter().apply(sx, sy)),
+                        CategoriesPage.Category.dragOnly(
                                 new ItemStack(Items.DROPPER),
                                 Component.translatable("screen.cogwheel.logic.merger"),
                                 Component.translatable("screen.cogwheel.logic.merger.subtitle"),
-                                true,
-                                () -> callbacks.onAddMerger().run()),
-                        new CategoriesPage.Category(
+                                (sx, sy) -> callbacks.onAddMerger().apply(sx, sy)),
+                        CategoriesPage.Category.dragOnly(
                                 new ItemStack(Items.REDSTONE_TORCH),
                                 Component.translatable("screen.cogwheel.logic.limiter"),
                                 Component.translatable("screen.cogwheel.logic.limiter.subtitle"),
-                                true,
-                                () -> callbacks.onAddLimiter().run()),
-                        new CategoriesPage.Category(
+                                (sx, sy) -> callbacks.onAddLimiter().apply(sx, sy)),
+                        CategoriesPage.Category.dragOnly(
                                 new ItemStack(Items.LAVA_BUCKET),
                                 Component.translatable("screen.cogwheel.logic.void"),
                                 Component.translatable("screen.cogwheel.logic.void.subtitle"),
-                                true,
-                                () -> callbacks.onAddVoid().run()),
-                        new CategoriesPage.Category(
+                                (sx, sy) -> callbacks.onAddVoid().apply(sx, sy)),
+                        CategoriesPage.Category.dragOnly(
                                 new ItemStack(Items.BUNDLE),
                                 Component.translatable("screen.cogwheel.logic.cluster"),
                                 Component.translatable("screen.cogwheel.logic.cluster.subtitle"),
-                                true,
-                                () -> callbacks.onAddCluster().run()),
-                        new CategoriesPage.Category(
+                                (sx, sy) -> callbacks.onAddCluster().apply(sx, sy)),
+                        CategoriesPage.Category.dragOnly(
                                 new ItemStack(Items.CLOCK),
                                 Component.translatable("screen.cogwheel.logic.loop"),
                                 Component.translatable("screen.cogwheel.logic.loop.subtitle"),
-                                true,
-                                () -> callbacks.onAddLoop().run())
+                                (sx, sy) -> callbacks.onAddLoop().apply(sx, sy))
                 ));
     }
 

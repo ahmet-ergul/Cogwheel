@@ -130,8 +130,13 @@ public final class CreateSequencedAssemblyClusterBuilder {
                     stepOutItem.isEmpty() ? "out" : stepOutItem.getHoverName().getString(), stepOutItem));
 
             ResourceLocation typeId = net.minecraft.core.registries.BuiltInRegistries.RECIPE_TYPE.getKey(processing.getType());
+            // Format: cogwheel_synthetic:<typePath>/<sanitized_original_id>_step_<i>
+            // Putting the type FIRST lets the solver pull it back out cheaply via
+            // dev.kima.cogwheel.solver.PowerCalculator-friendly lookups, even though synthetic
+            // ids never appear in the recipe index.
+            String typePath = typeId == null ? "step" : typeId.getPath();
             ResourceLocation synthId = ResourceLocation.fromNamespaceAndPath("cogwheel_synthetic",
-                    sanitizePath(recipeId.toString() + "/step_" + (i + 1) + "_" + (typeId == null ? "step" : typeId.getPath())));
+                    typePath + "/" + sanitizePath(recipeId.toString() + "_step_" + (i + 1)));
             Component title = Component.literal((typeId == null ? "step " + (i + 1) : typeId.getPath()) + " " + (i + 1));
             RecipeNode step = new RecipeNode(
                     UUID.randomUUID(),

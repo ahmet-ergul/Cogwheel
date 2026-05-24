@@ -23,11 +23,17 @@ public final class CanvasRenderer {
 
     public static void render(GuiGraphics graphics, Canvas canvas, Design design,
                               int x, int y, int w, int h) {
-        render(graphics, canvas, design, x, y, w, h, false);
+        render(graphics, canvas, design, x, y, w, h, false, java.util.Map.of());
     }
 
     public static void render(GuiGraphics graphics, Canvas canvas, Design design,
                               int x, int y, int w, int h, boolean lockedBackground) {
+        render(graphics, canvas, design, x, y, w, h, lockedBackground, java.util.Map.of());
+    }
+
+    public static void render(GuiGraphics graphics, Canvas canvas, Design design,
+                              int x, int y, int w, int h, boolean lockedBackground,
+                              java.util.Map<java.util.UUID, Double> nodeSuDraw) {
         int bg = dev.kima.cogwheel.settings.CogwheelSettings.c(
                 lockedBackground
                         ? dev.kima.cogwheel.settings.CogwheelSettings.Key.CANVAS_BG_LOCKED
@@ -56,7 +62,8 @@ public final class CanvasRenderer {
         graphics.flush();
 
         for (Node node : design.nodes()) {
-            NodeRenderer.render(graphics, node, canvas.isSelected(node.id()), resolver, RebuildTrigger.index());
+            NodeRenderer.render(graphics, node, canvas.isSelected(node.id()), resolver,
+                    RebuildTrigger.index(), nodeSuDraw.getOrDefault(node.id(), 0.0));
         }
 
         // Marquee selection rectangle (world space, so it grows/shrinks with zoom naturally).

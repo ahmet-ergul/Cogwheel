@@ -50,8 +50,9 @@ public final class ItemListPage implements LeftPanelPage {
 
     private final Component title;
     private final List<Item> allItems;
-    /** Called when an item is dragged out of the panel and released over the canvas. */
-    private final Consumer<Item> onDropOnCanvas;
+    /** Called when an item is dragged out of the panel and released over the canvas. Coordinates
+     *  are SCREEN-space; EditorScreen translates via {@code Canvas.screenToWorld} for placement. */
+    private final dev.kima.cogwheel.client.ui.panel.LeftPanel.ItemAdder onDropOnCanvas;
 
     private EditBox searchBox;
     private List<Item> filtered = List.of();
@@ -66,7 +67,8 @@ public final class ItemListPage implements LeftPanelPage {
     private double pressX, pressY;
     private boolean dragStarted;
 
-    public ItemListPage(Component title, List<Item> items, Consumer<Item> onDropOnCanvas) {
+    public ItemListPage(Component title, List<Item> items,
+                         dev.kima.cogwheel.client.ui.panel.LeftPanel.ItemAdder onDropOnCanvas) {
         this.title = title;
         this.allItems = List.copyOf(items);
         this.filtered = this.allItems;
@@ -237,7 +239,7 @@ public final class ItemListPage implements LeftPanelPage {
         dragStarted = false;
         if (wasDragged) {
             if (!withinPanel(mouseX, mouseY)) {
-                onDropOnCanvas.accept(item);
+                onDropOnCanvas.apply(item, mouseX, mouseY);
             }
             // Dragged + released inside panel = drag cancelled, no-op.
             return true;

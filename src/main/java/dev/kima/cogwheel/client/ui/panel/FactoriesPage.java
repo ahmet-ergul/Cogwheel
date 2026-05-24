@@ -1,6 +1,7 @@
 package dev.kima.cogwheel.client.ui.panel;
 
 import dev.kima.cogwheel.client.ui.ScaledUi;
+import dev.kima.cogwheel.client.ui.modal.FactoryPowerModal;
 import dev.kima.cogwheel.model.Factory;
 import dev.kima.cogwheel.model.FactoryStore;
 import net.minecraft.client.Minecraft;
@@ -23,6 +24,12 @@ import java.util.UUID;
  * that the user can rename right away.
  */
 public final class FactoriesPage implements LeftPanelPage {
+
+    /** Callback type for applying power-source + RPM changes from {@link FactoryPowerModal}. */
+    @FunctionalInterface
+    public interface PowerApplier {
+        void apply(UUID factoryId, java.util.Optional<UUID> powerSourceId, int rpm);
+    }
 
     private static final int ROW_HEIGHT = 22;
     private static final int PADDING = 6;
@@ -108,10 +115,12 @@ public final class FactoriesPage implements LeftPanelPage {
             ScaledUi.drawString(graphics, font, ScaledUi.truncate(font, name, width - PADDING * 2 - BUTTON_SIZE * 2 - 8),
                     x + PADDING, rowY + 7, isCurrent ? TEXT : TEXT_DIM, false);
 
-            // Buttons on the right: ✎ rename, × delete.
+            // Buttons on the right: ⚡ power, ✎ rename, × delete.
+            int powerX = x + width - PADDING - BUTTON_SIZE * 3 - 4;
             int renameX = x + width - PADDING - BUTTON_SIZE * 2 - 2;
             int deleteX = x + width - PADDING - BUTTON_SIZE;
             int btnY = rowY + (ROW_HEIGHT - BUTTON_SIZE) / 2;
+            drawButton(graphics, font, powerX, btnY, "⚡", mouseX, mouseY, TEXT_DIM);
             drawButton(graphics, font, renameX, btnY, "✎", mouseX, mouseY, TEXT_DIM);
             drawButton(graphics, font, deleteX, btnY, "×", mouseX, mouseY, TEXT_DANGER);
         }
@@ -210,9 +219,19 @@ public final class FactoriesPage implements LeftPanelPage {
 
         Factory clicked = all.get(index);
         int rowY = listY + index * ROW_HEIGHT - (int) scroll;
+        int powerX = x + width - PADDING - BUTTON_SIZE * 3 - 4;
         int renameX = x + width - PADDING - BUTTON_SIZE * 2 - 2;
         int deleteX = x + width - PADDING - BUTTON_SIZE;
         int btnY = rowY + (ROW_HEIGHT - BUTTON_SIZE) / 2;
+
+        // Power button hit?
+        if (mouseX >= powerX && mouseX < powerX + BUTTON_SIZE && mouseY >= btnY && mouseY < btnY + BUTTON_SIZE) {
+            Minecraft.getInstance().setScreen(new FactoryPowerModal(
+                    Minecraft.getInstance().screen,
+                    clicked,
+                    (sourceId, rpm) -> callbacks.onApplyFactoryPower().apply(clicked.id(), sourceId, rpm)));
+            return true;
+        }
 
         // Rename button hit?
         if (mouseX >= renameX && mouseX < renameX + BUTTON_SIZE && mouseY >= btnY && mouseY < btnY + BUTTON_SIZE) {

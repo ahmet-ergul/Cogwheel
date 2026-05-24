@@ -96,7 +96,8 @@ public final class DesignCodecs {
             ITEM_STACK.fieldOf("icon").forGetter(RecipeNode::icon),
             PORT.listOf().fieldOf("inputs").forGetter(RecipeNode::inputs),
             PORT.listOf().fieldOf("outputs").forGetter(RecipeNode::outputs),
-            Codec.INT.fieldOf("parallelism").forGetter(RecipeNode::parallelism)
+            Codec.INT.fieldOf("parallelism").forGetter(RecipeNode::parallelism),
+            Codec.INT.optionalFieldOf("rpm_override").forGetter(RecipeNode::rpmOverride)
     ).apply(i, RecipeNode::new));
 
     public static final MapCodec<SinkNode> SINK_NODE = RecordCodecBuilder.mapCodec(i -> i.group(
@@ -159,7 +160,8 @@ public final class DesignCodecs {
             Codec.STRING.fieldOf("label").forGetter(ClusterNode::label),
             Codec.lazyInitialized(DesignCodecs::designCodec).fieldOf("inner_design").forGetter(ClusterNode::innerDesign),
             CLUSTER_KIND.fieldOf("kind").forGetter(ClusterNode::kind),
-            Codec.INT.optionalFieldOf("parallelism", 1).forGetter(ClusterNode::parallelism)
+            Codec.INT.optionalFieldOf("parallelism", 1).forGetter(ClusterNode::parallelism),
+            Codec.INT.optionalFieldOf("rpm_override").forGetter(ClusterNode::rpmOverride)
     ).apply(i, ClusterNode::new));
 
     public static final Codec<Node> NODE = Codec.STRING.dispatch(
@@ -225,7 +227,9 @@ public final class DesignCodecs {
     public static final Codec<Factory> FACTORY = RecordCodecBuilder.create(i -> i.group(
             UUIDUtil.CODEC.fieldOf("id").forGetter(Factory::id),
             Codec.STRING.fieldOf("name").forGetter(Factory::name),
-            DESIGN.fieldOf("design").forGetter(Factory::design)
+            DESIGN.fieldOf("design").forGetter(Factory::design),
+            UUIDUtil.CODEC.optionalFieldOf("power_source_id").forGetter(Factory::powerSourceId),
+            Codec.INT.optionalFieldOf("rpm", Factory.DEFAULT_RPM).forGetter(Factory::rpm)
     ).apply(i, Factory::new));
 
     /** Persisted shape of {@code FactoryStore} — saved to {@code <gameDir>/cogwheel/store.json}. */

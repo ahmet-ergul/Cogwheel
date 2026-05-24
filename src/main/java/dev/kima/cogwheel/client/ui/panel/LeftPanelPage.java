@@ -12,7 +12,7 @@ import net.minecraft.network.chat.Component;
  * <p>Pages own their per-page vanilla widgets (e.g. search EditBox) and are responsible for
  * registering with the host on {@link #onShow} and removing themselves on {@link #onHide}.
  */
-public sealed interface LeftPanelPage permits CategoriesPage, ItemListPage, FactoriesPage, SettingsPage {
+public sealed interface LeftPanelPage permits CategoriesPage, ItemListPage, FactoriesPage, SettingsPage, PowerSourcesPage {
 
     /**
      * Bridge to the parent {@code Screen}'s protected widget-management methods. EditorScreen

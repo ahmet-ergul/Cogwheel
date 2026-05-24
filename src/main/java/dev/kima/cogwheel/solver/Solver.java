@@ -36,10 +36,20 @@ public final class Solver {
     /** Cycle-time floor for "instant" recipes (e.g. vanilla crafting which has 0 ticks). 1s = 20 ticks. */
     private static final double DEFAULT_TICKS_FOR_INSTANT = 20.0;
     private static final double TICKS_PER_MINUTE = 1200.0;
+    /** Reference RPM used to scale Create processing duration. At this RPM a recipe runs at its
+     *  raw {@code processingTimeTicks} duration; below this it's slower, above it's faster. Picked
+     *  to roughly match Create's mid-range hand speed (mid-range shaft setup); the exact in-game
+     *  formula is per-block and varies, so this is the planner's approximation. */
+    private static final double BASELINE_RPM = 32.0;
 
     private Solver() {}
 
+    /** Back-compat overload — uses the default RPM for SU/throughput scaling. */
     public static SolverResult solve(Design design, RecipeIndex index) {
+        return solve(design, index, dev.kima.cogwheel.model.Factory.DEFAULT_RPM);
+    }
+
+    public static SolverResult solve(Design design, RecipeIndex index, int factoryRpm) {
         List<Node> topo = topoSort(design);
         if (topo == null) {
             return SolverResult.cycle();
@@ -50,13 +60,22 @@ public final class Solver {
         Map<Item, Double> unmetInputs = new LinkedHashMap<>();
         Map<Item, Double> finalOutputs = new LinkedHashMap<>();
         Map<Item, Double> unusedOutputs = new LinkedHashMap<>();
+        Map<UUID, Double> nodeSuDraw = new LinkedHashMap<>();
 
         // Pass 1: for each recipe node, compute its demand on each input port and supply on
         // each output. Sources don't add anything to the aggregates — they're treated as infinite
-        // suppliers.
+        // suppliers. Also accumulates per-node SU draw for Create-backed recipes.
         for (Node node : topo) {
             if (node instanceof RecipeNode rn) {
-                processRecipeNode(design, index, rn, edgeRates, cyclesPerMin, unmetInputs, unusedOutputs);
+                processRecipeNode(design, index, rn, factoryRpm, edgeRates, cyclesPerMin,
+                        unmetInputs, unusedOutputs, nodeSuDraw);
+            } else if (node instanceof dev.kima.cogwheel.model.ClusterNode cluster) {
+                // ClusterNodes contribute the recursive sum of every inner Create RecipeNode's SU
+                // multiplied by the cluster's parallelism. We DON'T re-solve the inner flow here
+                // (that's the cluster's own concern when the user steps into it) — only SU is
+                // aggregated for the outer power-budget tally.
+                double clusterSu = computeClusterSuRecursive(cluster, index, factoryRpm);
+                if (clusterSu > 0) nodeSuDraw.put(cluster.id(), clusterSu);
             }
         }
 
@@ -107,14 +126,20 @@ public final class Solver {
             }
         }
 
-        return new SolverResult(false, edgeRates, cyclesPerMin, unmetInputs, finalOutputs, unusedOutputs);
+        double totalSu = 0;
+        for (Double v : nodeSuDraw.values()) totalSu += v;
+
+        return new SolverResult(false, edgeRates, cyclesPerMin, unmetInputs, finalOutputs,
+                unusedOutputs, nodeSuDraw, totalSu);
     }
 
     private static void processRecipeNode(Design design, RecipeIndex index, RecipeNode rn,
+                                          int factoryRpm,
                                           Map<Edge, Double> edgeRates,
                                           Map<UUID, Double> cyclesPerMin,
                                           Map<Item, Double> unmetInputs,
-                                          Map<Item, Double> unusedOutputs) {
+                                          Map<Item, Double> unusedOutputs,
+                                          Map<UUID, Double> nodeSuDraw) {
         RecipeEntry entry = index.byId(rn.recipeId());
         if (entry == null) {
             // Recipe lookup failed (mod removed, etc.) — record one cycle/min as a fallback so the
@@ -123,10 +148,27 @@ public final class Solver {
             return;
         }
 
-        double ticks = entry.processingTimeTicks() <= 0
+        double baseTicks = entry.processingTimeTicks() <= 0
                 ? DEFAULT_TICKS_FOR_INSTANT
                 : entry.processingTimeTicks();
-        double cycles = (TICKS_PER_MINUTE / ticks) * rn.parallelism();
+
+        // Create RPM effects:
+        //   1. Stress: a Create component running at this rpm draws impact × rpm SU per machine,
+        //      multiplied by parallelism (each parallel unit is its own physical machine).
+        //   2. Throughput: at higher RPM the recipe completes faster, so cycles/min scales by
+        //      (rpm / BASELINE_RPM). Non-Create recipes ignore RPM entirely.
+        double impactPerRpm = dev.kima.cogwheel.solver.PowerCalculator.impactPerRpm(entry.typeId());
+        boolean isCreate = impactPerRpm > 0;
+        double rpmScale = 1.0;
+        if (isCreate) {
+            int rpm = rn.rpmOverride().orElse(factoryRpm);
+            rpm = Math.max(1, rpm);
+            rpmScale = rpm / BASELINE_RPM;
+            double suPerMachine = impactPerRpm * rpm;
+            nodeSuDraw.put(rn.id(), suPerMachine * rn.parallelism());
+        }
+        double effectiveTicks = baseTicks / rpmScale;
+        double cycles = (TICKS_PER_MINUTE / effectiveTicks) * rn.parallelism();
         cyclesPerMin.put(rn.id(), cycles);
 
         // Inputs: each ingredient's count * cycles = demand on input port [i].
@@ -208,6 +250,49 @@ public final class Solver {
         // Cap the outgoing edge so the downstream sees only what passes through; void the rest.
         edgeRates.put(outEdge, effective);
         if (inEdge != null) edgeRates.put(inEdge, effective);
+    }
+
+    /** Sum of Create-backed SU draw across every node in the cluster (recursively into nested
+     *  clusters), scaled by this cluster's parallelism. Cluster RPM cascades: each inner node
+     *  with {@code rpmOverride.isEmpty()} uses the cluster's effective RPM; nested clusters
+     *  similarly inherit. LoopNodes inside don't affect SU (loops scale throughput, not power). */
+    private static double computeClusterSuRecursive(dev.kima.cogwheel.model.ClusterNode cluster,
+                                                      RecipeIndex index, int parentRpm) {
+        int effectiveRpm = cluster.rpmOverride().orElse(parentRpm);
+        double innerSuPerInstance = 0;
+        for (Node n : cluster.innerDesign().nodes()) {
+            if (n instanceof RecipeNode rn) {
+                net.minecraft.resources.ResourceLocation typeId = resolveRecipeType(rn, index);
+                if (typeId == null) continue;
+                double impactPerRpm = dev.kima.cogwheel.solver.PowerCalculator.impactPerRpm(typeId);
+                if (impactPerRpm <= 0) continue;
+                int rpm = Math.max(1, rn.rpmOverride().orElse(effectiveRpm));
+                innerSuPerInstance += impactPerRpm * rpm * rn.parallelism();
+            } else if (n instanceof dev.kima.cogwheel.model.ClusterNode innerCluster) {
+                innerSuPerInstance += computeClusterSuRecursive(innerCluster, index, effectiveRpm);
+            }
+        }
+        return innerSuPerInstance * cluster.parallelism();
+    }
+
+    /** Real type id for a recipe node. First checks the index by recipe id; falls back to parsing
+     *  the {@code cogwheel_synthetic:<type>/...} synthetic prefix used by the sequenced-assembly
+     *  cluster builder for steps that don't exist as standalone recipes. Returns {@code null} if
+     *  neither path resolves. */
+    private static net.minecraft.resources.ResourceLocation resolveRecipeType(RecipeNode rn, RecipeIndex index) {
+        RecipeEntry entry = index.byId(rn.recipeId());
+        if (entry != null) return entry.typeId();
+        net.minecraft.resources.ResourceLocation rid = rn.recipeId();
+        if (rid != null && "cogwheel_synthetic".equals(rid.getNamespace())) {
+            String path = rid.getPath();
+            int slash = path.indexOf('/');
+            if (slash > 0) {
+                // Synthetic id is namespaced as <recipeType>/<sanitized-original-id-and-step>.
+                String typeName = path.substring(0, slash);
+                return net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("create", typeName);
+            }
+        }
+        return null;
     }
 
     private static Edge findIncomingEdge(Design design, UUID nodeId, int portIndex) {

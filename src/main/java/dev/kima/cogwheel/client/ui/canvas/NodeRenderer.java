@@ -101,8 +101,14 @@ public final class NodeRenderer {
         return new Vec2(x, y);
     }
 
+    /** Back-compat overload with no SU info. */
     public static void render(GuiGraphics graphics, Node node, boolean selected,
                               PortDisplayResolver resolver, RecipeIndex index) {
+        render(graphics, node, selected, resolver, index, 0.0);
+    }
+
+    public static void render(GuiGraphics graphics, Node node, boolean selected,
+                              PortDisplayResolver resolver, RecipeIndex index, double suDraw) {
         Font font = Minecraft.getInstance().font;
         int x = (int) node.position().x();
         int y = (int) node.position().y();
@@ -200,6 +206,22 @@ public final class NodeRenderer {
             renderBottomPortAt(graphics, node, i);
         }
 
+        // SU draw badge: small "SU N" tag just below the bottom edge of the node, drawn for any
+        // Create-backed node the solver attributed a positive SU value to. Makes per-node power
+        // contributions visible at a glance without opening the properties panel.
+        if (suDraw > 0) {
+            String suStr = "SU " + formatSuShort(suDraw);
+            // Scale matches the rest of the node text scale so badges shrink/grow with CONTENT_SCALE.
+            float s = contentScale();
+            int textWidth = Math.round(font.width(suStr) * s);
+            int badgeX = x + (w - textWidth) / 2;
+            int badgeY = y + h + 2;
+            // Subtle dark background pill behind the text for legibility over the grid pattern.
+            graphics.fill(badgeX - 2, badgeY - 1, badgeX + textWidth + 2, badgeY + Math.round(9 * s) - 1,
+                    0xCC131726);
+            renderScaledText(graphics, font, suStr, badgeX, badgeY, 0xFFE8B86E);
+        }
+
         // LoopNode also shows the iteration count "×N" below its title line.
         if (node instanceof dev.kima.cogwheel.model.LoopNode loop) {
             String countStr = "×" + loop.loopCount();
@@ -208,6 +230,12 @@ public final class NodeRenderer {
             int cy = y + HEADER_HEIGHT + 4;
             renderScaledText(graphics, font, countStr, cx, cy, TEXT);
         }
+    }
+
+    private static String formatSuShort(double su) {
+        if (su >= 1_000_000) return String.format("%.2fM", su / 1_000_000);
+        if (su >= 1_000) return String.format("%.1fk", su / 1_000);
+        return String.format("%.0f", su);
     }
 
     private static void renderBottomPortAt(GuiGraphics graphics, Node node, int portIndex) {

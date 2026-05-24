@@ -6,6 +6,7 @@ import net.minecraft.world.item.Items;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -17,13 +18,16 @@ import java.util.UUID;
  * <ul>
  *   <li>{@link Kind#LOCKED} — auto-built (e.g. a sequenced assembly recipe expanded into its
  *       sub-steps). Inner design is fixed; the user can't edit the contents but can still adjust
- *       the outer cluster's parallelism / position.</li>
+ *       the outer cluster's parallelism / position / RPM.</li>
  *   <li>{@link Kind#USER} — created via "Group selected" on the canvas. User is free to edit
  *       the inner design after navigating in.</li>
  * </ul>
  *
- * <p>Visual differentiation: ClusterNode renders with a violet border + slightly different header
- * gradient (see {@code NodeRenderer}).
+ * <p>{@link #rpmOverride} is the cluster's own RPM. When set, every inner Create-backed
+ * RecipeNode without its own override inherits this value (the solver passes the cluster RPM down
+ * as the {@code factoryRpm} for the inner solve). When empty, the cluster inherits whatever RPM
+ * its containing context provides — the parent factory's RPM at the root, or an outer cluster's
+ * effective RPM if nested.
  */
 public record ClusterNode(
         UUID id,
@@ -31,7 +35,8 @@ public record ClusterNode(
         String label,
         Design innerDesign,
         Kind kind,
-        int parallelism
+        int parallelism,
+        Optional<Integer> rpmOverride
 ) implements Node {
 
     public enum Kind { USER, LOCKED }
@@ -40,6 +45,12 @@ public record ClusterNode(
         if (label == null) label = "Cluster";
         if (kind == null) kind = Kind.USER;
         parallelism = Math.max(1, Math.min(256, parallelism));
+        if (rpmOverride == null) rpmOverride = Optional.empty();
+    }
+
+    /** Back-compat constructor for pre-RPM callers / saves. */
+    public ClusterNode(UUID id, Vec2 position, String label, Design innerDesign, Kind kind, int parallelism) {
+        this(id, position, label, innerDesign, kind, parallelism, Optional.empty());
     }
 
     @Override
@@ -91,22 +102,27 @@ public record ClusterNode(
 
     @Override
     public ClusterNode withPosition(Vec2 newPosition) {
-        return new ClusterNode(id, newPosition, label, innerDesign, kind, parallelism);
+        return new ClusterNode(id, newPosition, label, innerDesign, kind, parallelism, rpmOverride);
     }
 
     public ClusterNode withInnerDesign(Design newInner) {
-        return new ClusterNode(id, position, label, newInner, kind, parallelism);
+        return new ClusterNode(id, position, label, newInner, kind, parallelism, rpmOverride);
     }
 
     public ClusterNode withLabel(String newLabel) {
-        return new ClusterNode(id, position, newLabel == null ? "Cluster" : newLabel, innerDesign, kind, parallelism);
+        return new ClusterNode(id, position, newLabel == null ? "Cluster" : newLabel, innerDesign, kind, parallelism, rpmOverride);
     }
 
     public ClusterNode withParallelism(int newParallelism) {
-        return new ClusterNode(id, position, label, innerDesign, kind, newParallelism);
+        return new ClusterNode(id, position, label, innerDesign, kind, newParallelism, rpmOverride);
     }
 
     public ClusterNode withKind(Kind newKind) {
-        return new ClusterNode(id, position, label, innerDesign, newKind, parallelism);
+        return new ClusterNode(id, position, label, innerDesign, newKind, parallelism, rpmOverride);
+    }
+
+    public ClusterNode withRpmOverride(Optional<Integer> newRpm) {
+        return new ClusterNode(id, position, label, innerDesign, kind, parallelism,
+                newRpm == null ? Optional.empty() : newRpm);
     }
 }
