@@ -2,8 +2,6 @@
 
 A node-based visual factory planner for Minecraft 1.21.1 NeoForge — think "n8n for modded Minecraft." Plan your Create-mod factories (and any other recipe-driven mod) as a graph on a canvas before you build them in the world.
 
-**Status: pre-alpha.** Phase 0 (mod skeleton) only. The screen is empty; the canvas, recipe index, and solver land in later phases.
-
 ## Requirements
 
 - Minecraft `1.21.1`
